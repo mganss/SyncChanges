@@ -68,20 +68,26 @@ namespace SyncChanges
             {
                 using (var db = new Database(dbInfo.ConnectionString, DatabaseType.SqlServer2008))
                 {
-                    var sql = @"select ('[' + s.name + '].[' + t.name + ']') TableName, ('[' + COL_NAME(t.object_id, a.column_id) + ']') ColumnName,
-coalesce(c.index_id, 0) IndexId
+                    var sql = @"select TableName, ColumnName, iif(max(cast(is_primary_key as tinyint)) = 1, 1, 0) PrimaryKey from
+(
+select ('[' + s.name + '].[' + t.name + ']') TableName, ('[' + COL_NAME(t.object_id, a.column_id) + ']') ColumnName,
+i.is_primary_key
 from sys.change_tracking_tables tr
 join sys.tables t on t.object_id = tr.object_id
 join sys.schemas s on s.schema_id = t.schema_id
 join sys.columns a on a.object_id = t.object_id
 left join sys.index_columns c on c.object_id = t.object_id and c.column_id = a.column_id
-left join sys.indexes i on i.object_id = t.object_id and i.index_id = c.index_id";
+left join sys.indexes i on i.object_id = t.object_id and i.index_id = c.index_id
+where a.is_computed = 0
+) X
+group by TableName, ColumnName
+order by TableName, ColumnName";
                     var tables = db.Fetch<dynamic>(sql).GroupBy(t => t.TableName)
                         .Select(g => new TableInfo
                         {
                             Name = (string)g.Key,
-                            KeyColumns = g.Where(c => (int)c.IndexId > 0).Select(c => (string)c.ColumnName).ToList(),
-                            OtherColumns = g.Where(c => (int)c.IndexId == 0).Select(c => (string)c.ColumnName).ToList()
+                            KeyColumns = g.Where(c => (int)c.PrimaryKey > 0).Select(c => (string)c.ColumnName).ToList(),
+                            OtherColumns = g.Where(c => (int)c.PrimaryKey == 0).Select(c => (string)c.ColumnName).ToList()
                         }).ToList();
 
                     return tables;
@@ -188,6 +194,9 @@ from CHANGETABLE (CHANGES {tableName}, @0) c
 left outer join {tableName} t on ";
                     sql += string.Join(" and ", table.KeyColumns.Select(k => $"c.{k} = t.{k}"));
                     sql += " order by c.SYS_CHANGE_VERSION";
+
+                    Log.Debug($"Retrieving changes for table {tableName}: {sql}");
+
                     db.OpenSharedConnection();
                     var cmd = db.CreateCommand(db.Connection, System.Data.CommandType.Text, sql, destinationVersion);
 
@@ -217,7 +226,7 @@ left outer join {tableName} t on ";
                             numChanges++;
                         }
 
-                        Log.Info($"Table {tableName} has {numChanges}");
+                        Log.Info($"Table {tableName} has {numChanges} changes");
                     }
                 }
 
@@ -245,9 +254,8 @@ left outer join {tableName} t on ";
                         string.Join(", ", Parameters(insertColumnNames.Count))) +
                         $"set IDENTITY_INSERT {tableName} OFF";
                     var insertValues = change.Values;
-                    if (DryRun)
-                        Log.Info($"Executing insert: {insertSql} ({FormatArgs(insertValues)})");
-                    else
+                    Log.Debug($"Executing insert: {insertSql} ({FormatArgs(insertValues)})");
+                    if (!DryRun)
                         db.Execute(insertSql, insertValues);
                     break;
 
@@ -258,9 +266,8 @@ left outer join {tableName} t on ";
                         string.Join(", ", updateColumnNames.Select((c, i) => $"{c} = @{i + change.Keys.Count}")),
                         PrimaryKeys(table, change));
                     var updateValues = change.Values;
-                    if (DryRun)
-                        Log.Info($"Executing update: {updateSql} ({FormatArgs(updateValues)})");
-                    else
+                    Log.Debug($"Executing update: {updateSql} ({FormatArgs(updateValues)})");
+                    if (!DryRun)
                         db.Execute(updateSql, updateValues);
                     break;
 
@@ -268,9 +275,8 @@ left outer join {tableName} t on ";
                 case 'D':
                     var deleteSql = string.Format("delete from {0} where {1}", tableName, PrimaryKeys(table, change));
                     var deleteValues = change.Keys.Values.ToArray();
-                    if (DryRun)
-                        Log.Info($"Executing delete: {deleteSql} ({FormatArgs(deleteValues)})");
-                    else
+                    Log.Debug($"Executing delete: {deleteSql} ({FormatArgs(deleteValues)})");
+                    if (!DryRun)
                         db.Execute(deleteSql, deleteValues);
                     break;
             }
