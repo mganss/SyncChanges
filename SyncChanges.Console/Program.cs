@@ -17,6 +17,7 @@ namespace SyncChanges.Console
         List<string> ConfigFiles;
         bool DryRun;
         bool Error = false;
+        int Timeout = 0;
 
         static int Main(string[] args)
         {
@@ -31,6 +32,7 @@ namespace SyncChanges.Console
                     var options = new OptionSet {
                         { "h|help", "Show this message and exit", v => showHelp = v != null },
                         { "d|dryrun", "Do not alter target databases, only perform a test run", v => program.DryRun = v != null },
+                        { "t|timeout=", "Database command timeout in seconds", (int v) => program.Timeout = v }
                     };
 
                     program.ConfigFiles = options.Parse(args);
@@ -92,7 +94,7 @@ namespace SyncChanges.Console
 
                 try
                 {
-                    var synchronizer = new Synchronizer(config) { DryRun = DryRun };
+                    var synchronizer = new Synchronizer(config) { DryRun = DryRun, Timeout = Timeout };
                     var success = synchronizer.Sync();
                     Error = Error || !success;
                 }

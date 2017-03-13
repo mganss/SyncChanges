@@ -370,5 +370,47 @@ namespace SyncChanges.Tests
                 DropTable("Users");
             }
         }
+
+        [Test]
+        public void IntermediateTest()
+        {
+            try
+            {
+                CreateUsersTable();
+                CreateOrdersTable();
+                CreateOrdersForeignKey(SourceDatabaseName);
+                CreateOrdersForeignKey(DestinationDatabaseName);
+
+                var sourceOrder = new Order();
+                var sourceUser = new User { Name = "Michael Jordan", Age = 54, DateOfBirth = new DateTime(1963, 2, 17), Savings = 1.31m * 1e9m };
+                var sourceUser2 = new User { Name = "Larry Bird", Age = 60, DateOfBirth = new DateTime(1956, 12, 7), Savings = 45m * 1e6m };
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                {
+                    db.Insert(sourceUser);
+                    sourceOrder.UserId = sourceUser.UserId;
+                    db.Insert(sourceOrder);
+                    db.Insert(sourceUser2);
+                    sourceOrder.UserId = sourceUser2.UserId;
+                    db.Update(sourceOrder);
+                }
+
+                var synchronizer = new Synchronizer(TestConfig);
+                var success = synchronizer.Sync();
+
+                Assert.That(success, Is.True);
+
+                using (var db = GetDatabase(DestinationDatabaseName))
+                {
+                    var order = db.Single<Order>("select * from Orders");
+                    Assert.That(order, Is.EqualTo(sourceOrder));
+                }
+            }
+            finally
+            {
+                DropTable("Orders");
+                DropTable("Users");
+            }
+        }
     }
 }
