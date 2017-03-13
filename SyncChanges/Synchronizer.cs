@@ -4,8 +4,6 @@ using NPoco;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace SyncChanges
 {
@@ -56,38 +54,6 @@ namespace SyncChanges
             Log.Info($"Finished replication {(Error ? "with" : "without")} errors");
 
             return !Error;
-        }
-
-        class TableInfo
-        {
-            public string Name { get; set; }
-            public IList<string> KeyColumns { get; set; }
-            public IList<string> OtherColumns { get; set; }
-            public IList<ForeignKeyConstraint> ForeignKeyConstraints { get; set; }
-        }
-
-        class ForeignKeyConstraint
-        {
-            public string TableName { get; set; }
-            public string ColumnName { get; set; }
-            public string ReferencedTableName { get; set; }
-            public string ReferencedColumnName { get; set; }
-            public string ForeignKeyName { get; set; }
-            public string FullName => TableName + ":" + ForeignKeyName;
-
-            public override bool Equals(Object obj)
-            {
-                if (obj == null || GetType() != obj.GetType())
-                    return false;
-
-                var fk = (ForeignKeyConstraint)obj;
-                return FullName == fk.FullName;
-            }
-
-            public override int GetHashCode()
-            {
-                return FullName.GetHashCode();
-            }
         }
 
         private IList<TableInfo> GetTables(DatabaseInfo dbInfo)
@@ -152,36 +118,6 @@ namespace SyncChanges
                 Log.Fatal(ex, "Error getting tables to replicate from source database");
                 throw;
             }
-        }
-
-        class Change
-        {
-            public TableInfo Table { get; set; }
-            public long Version { get; set; }
-            public long CreationVersion { get; set; }
-            public char Operation { get; set; }
-            public Dictionary<string, object> Keys { get; private set; } = new Dictionary<string, object>();
-            public Dictionary<string, object> Others { get; private set; } = new Dictionary<string, object>();
-            public Dictionary<ForeignKeyConstraint, long> ForeignKeyConstraintsToDisable { get; private set; } = new Dictionary<ForeignKeyConstraint, long>();
-
-            public object[] Values => Keys.Values.Concat(Others.Values).ToArray();
-
-            public List<string> ColumnNames => Keys.Keys.Concat(Others.Keys).ToList();
-
-            public object GetValue(string columnName)
-            {
-                object o;
-                if (!Keys.TryGetValue(columnName, out o))
-                    if (!Others.TryGetValue(columnName, out o))
-                        return null;
-                return o;
-            }
-        }
-
-        class ChangeInfo
-        {
-            public long Version { get; set; }
-            public List<Change> Changes { get; private set; } = new List<Change>();
         }
 
         private Database GetDatabase(string connectionString, DatabaseType databaseType = null)
