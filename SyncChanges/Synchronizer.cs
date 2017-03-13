@@ -7,21 +7,46 @@ using System.Linq;
 
 namespace SyncChanges
 {
+    /// <summary>
+    /// Allows replication of database changes from a source database to one or more destination databases.
+    /// </summary>
     public class Synchronizer
     {
+        /// <summary>
+        /// Gets or sets a value indicating whether destination databases will be modified during a replication run.
+        /// </summary>
+        /// <value>
+        ///   <c>true</c> if destination databases will be modified; otherwise, <c>false</c>.
+        /// </value>
         public bool DryRun { get; set; } = false;
+
+        /// <summary>
+        /// Gets or sets the database connection timeout.
+        /// </summary>
+        /// <value>
+        /// The database connection timeout.
+        /// </value>
         public int Timeout { get; set; } = 0;
 
         static Logger Log = LogManager.GetCurrentClassLogger();
         Config Config { get; set; }
         bool Error { get; set; }
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="Synchronizer"/> class.
+        /// </summary>
+        /// <param name="config">The configuration.</param>
+        /// <exception cref="System.ArgumentException"><paramref name="config"/> is null</exception>
         public Synchronizer(Config config)
         {
             if (config == null) throw new ArgumentException("config is null", nameof(config));
             Config = config;
         }
 
+        /// <summary>
+        /// Perform the synchronization.
+        /// </summary>
+        /// <returns>true, if the synchronization was successful; otherwise, false.</returns>
         public bool Sync()
         {
             Error = false;
