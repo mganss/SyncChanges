@@ -225,8 +225,9 @@ namespace SyncChanges.Tests
             }
         }
 
-        [Test]
-        public void UpdateDeleteTest()
+        [TestCase(true)]
+        [TestCase(false)]
+        public void UpdateDeleteTest(bool dryRun)
         {
             try
             {
@@ -245,15 +246,18 @@ namespace SyncChanges.Tests
                         db.Insert(user);
                 }
 
-                var synchronizer = new Synchronizer(TestConfig);
+                var synchronizer = new Synchronizer(TestConfig) { DryRun = dryRun };
                 var success = synchronizer.Sync();
 
                 Assert.That(success, Is.True);
 
-                using (var db = GetDatabase(DestinationDatabaseName))
+                if (!dryRun)
                 {
-                    var users = db.Fetch<User>("select * from Users");
-                    Assert.That(users, Is.EquivalentTo(sourceUsers));
+                    using (var db = GetDatabase(DestinationDatabaseName))
+                    {
+                        var users = db.Fetch<User>("select * from Users");
+                        Assert.That(users, Is.EquivalentTo(sourceUsers));
+                    }
                 }
 
                 using (var db = GetDatabase(SourceDatabaseName))
@@ -270,10 +274,13 @@ namespace SyncChanges.Tests
 
                 Assert.That(success, Is.True);
 
-                using (var db = GetDatabase(DestinationDatabaseName))
+                if (!dryRun)
                 {
-                    var users = db.Fetch<User>("select * from Users");
-                    Assert.That(users, Is.EquivalentTo(sourceUsers));
+                    using (var db = GetDatabase(DestinationDatabaseName))
+                    {
+                        var users = db.Fetch<User>("select * from Users");
+                        Assert.That(users, Is.EquivalentTo(sourceUsers));
+                    }
                 }
             }
             finally
@@ -285,7 +292,7 @@ namespace SyncChanges.Tests
         [Test, Property("snapshot", "off")]
         public void NoSnapshotTest()
         {
-            UpdateDeleteTest();
+            UpdateDeleteTest(false);
         }
 
         [Test]
@@ -411,6 +418,48 @@ namespace SyncChanges.Tests
                 DropTable("Orders");
                 DropTable("Users");
             }
+        }
+
+        [Test]
+        public void NullConfigTest()
+        {
+            Assert.Throws<ArgumentException>(() => new Synchronizer(null));
+        }
+
+        [Test]
+        public void NoTablesTest()
+        {
+            var rs = new ReplicationSet
+            {
+                Name = "Test",
+                Source = new DatabaseInfo { Name = "Source", ConnectionString = GetConnectionString(SourceDatabaseName) },
+                Destinations = { new DatabaseInfo { Name = "Destination", ConnectionString = GetConnectionString(DestinationDatabaseName) } },
+                Tables = { }
+            };
+            var config = new Config { ReplicationSets = { rs } };
+
+            var synchronizer = new Synchronizer(config);
+            synchronizer.Timeout = 1000;
+            var success = synchronizer.Sync();
+
+            Assert.That(success, Is.True);
+        }
+
+        [Test]
+        public void FalseSourceTest()
+        {
+            var rs = new ReplicationSet
+            {
+                Name = "Test",
+                Source = new DatabaseInfo { Name = "Source", ConnectionString = GetConnectionString("Error") },
+                Destinations = { new DatabaseInfo { Name = "Destination", ConnectionString = GetConnectionString(DestinationDatabaseName) } },
+                Tables = { }
+            };
+            var config = new Config { ReplicationSets = { rs } };
+
+            var synchronizer = new Synchronizer(config);
+            synchronizer.Timeout = 1000;
+            Assert.Throws<System.Data.SqlClient.SqlException>(() => synchronizer.Sync());
         }
     }
 }
