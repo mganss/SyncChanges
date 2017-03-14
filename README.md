@@ -1,6 +1,7 @@
 SyncChanges
 ===========
 
+[![NuGet version](https://badge.fury.io/nu/SyncChanges.svg)](http://badge.fury.io/nu/SyncChanges)
 [![Build status](https://ci.appveyor.com/api/projects/status/pn3y41ltb8tcq4kk?svg=true)](https://ci.appveyor.com/project/mganss/syncchanges/branch/master)
 [![codecov.io](https://codecov.io/github/mganss/SyncChanges/coverage.svg?branch=master)](https://codecov.io/github/mganss/SyncChanges?branch=master)
 
