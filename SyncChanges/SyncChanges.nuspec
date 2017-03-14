@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<package >
+  <metadata>
+    <id>$id$</id>
+    <version>$version$</version>
+    <title>$title$</title>
+    <authors>$author$</authors>
+    <owners>$author$</owners>
+    <licenseUrl>https://github.com/mganss/SyncChanges/LICENSE</licenseUrl>
+    <projectUrl>https://github.com/mganss/SyncChanges</projectUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>$description$</description>
+    <copyright>Copyright 2017 Michael Ganss</copyright>
+    <tags>replication synchronization sqlserver sql-server mirroring database</tags>
+  </metadata>
+  <files>
+    <file src="..\SyncChanges.Console\bin\Release\Humanizer.dll" target="tools" />
+    <file src="..\SyncChanges.Console\bin\Release\Humanizer.pdb" target="tools" />
+    <file src="..\SyncChanges.Console\bin\Release\Humanizer.xml" target="tools" />
+    <file src="..\SyncChanges.Console\bin\Release\Mono.Options.dll" target="tools" />
+    <file src="..\SyncChanges.Console\bin\Release\Newtonsoft.Json.dll" target="tools" />
+    <file src="..\SyncChanges.Console\bin\Release\Newtonsoft.Json.xml" target="tools" />
+    <file src="..\SyncChanges.Console\bin\Release\NLog.config" target="tools" />
+    <file src="..\SyncChanges.Console\bin\Release\NLog.dll" target="tools" />
+    <file src="..\SyncChanges.Console\bin\Release\NLog.xml" target="tools" />
+    <file src="..\SyncChanges.Console\bin\Release\NPoco.dll" target="tools" />
+    <file src="..\SyncChanges.Console\bin\Release\SyncChanges.Console.exe" target="tools" />
+    <file src="..\SyncChanges.Console\bin\Release\SyncChanges.Console.exe.config" target="tools" />
+    <file src="..\SyncChanges.Console\bin\Release\SyncChanges.Console.pdb" target="tools" />
+    <file src="..\SyncChanges.Console\bin\Release\SyncChanges.dll" target="tools" />
+    <file src="..\SyncChanges.Console\bin\Release\SyncChanges.pdb" target="tools" />
+    <file src="..\SyncChanges.Console\bin\Release\SyncChanges.xml" target="tools" />
+  </files>
+</package>
