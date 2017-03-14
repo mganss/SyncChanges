@@ -434,7 +434,7 @@ namespace SyncChanges.Tests
                 Name = "Test",
                 Source = new DatabaseInfo { Name = "Source", ConnectionString = GetConnectionString(SourceDatabaseName) },
                 Destinations = { new DatabaseInfo { Name = "Destination", ConnectionString = GetConnectionString(DestinationDatabaseName) } },
-                Tables = { }
+                Tables = new List<string> { "Test" }
             };
             var config = new Config { ReplicationSets = { rs } };
 
