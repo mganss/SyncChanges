@@ -82,6 +82,8 @@ Replication is a multi-step process that can be affected by concurrent changes t
 
 If snapshot isolation is not enabled, SyncChanges will still work but ignore changes that occurred after the current version of the source database was fetched. These will be applied during the next run.
 
+Change tracking only tracks inserts, updates, and deletes. If you make structural changes to the source database, these must be applied to all destinations as well.
+
 Foreign Key Constraints
 -----------------------------------------------
 
@@ -98,3 +100,14 @@ Logging
 -------
 
 SyncChanges uses [NLog](https://github.com/NLog/NLog). If you're using the console application, you can customize the `NLog.config` to your needs. The default configuration logs to the console as well as a daily rolling file `log.txt` in the same folder as the executable and keeps a maximum of 10 archived log files.
+
+Possible Improvements
+----------------------------
+
+- Use some change notification mechanism to trigger replication
+- Run as a service
+- Use column change tracking
+- Apply large amount of changes in batches (of configurable size)
+- Parallelize replication to destinations
+
+Feel free to grab one of these and make a PR.
