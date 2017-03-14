@@ -1,0 +1,26 @@
+version: 1.0.{build}
+skip_tags: true
+init:
+  - git config --global core.autocrlf true
+install:
+  - nuget restore
+configuration: Release
+platform: Any CPU
+build:
+  project: SyncChanges.sln
+  verbosity: minimal
+  publish_nuget: true
+  publish_nuget_symbols: true
+assembly_info:
+  patch: true
+  file: '**\AssemblyInfo.*'
+  assembly_version: "{version}"
+  assembly_file_version: "{version}"
+  assembly_informational_version: "{version}"
+test_script:
+  - nuget.exe install OpenCover -ExcludeVersion
+  - nuget.exe install NUnit.Runners -ExcludeVersion
+  - OpenCover\tools\OpenCover.Console.exe -register:user -filter:"+[*]* -[NUnit*]* -[*Tests*]* -[*Sample*]*" -target:"NUnit.Console\tools\nunit3-console.exe" -targetargs:"SyncChanges.Tests\bin\release\SyncChanges.Tests.dll" -returntargetcode -hideskipped:All -output:coverage.xml
+  - "SET PATH=C:\\Python34;C:\\Python34\\Scripts;%PATH%"
+  - pip install codecov
+  - codecov -f "coverage.xml"
