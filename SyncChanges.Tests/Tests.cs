@@ -296,6 +296,48 @@ namespace SyncChanges.Tests
         }
 
         [Test]
+        public void NoChangeTrackingInDestinationTest()
+        {
+            try
+            {
+                CreateUsersTable();
+
+                using (var db = GetDatabase(DestinationDatabaseName))
+                {
+                    db.Execute(@"alter table Users disable CHANGE_TRACKING");
+                    db.Execute($"alter database [{DestinationDatabaseName}] set CHANGE_TRACKING = OFF");
+                }
+
+                var sourceUser = new User { Name = "Michael Jordan", Age = 54, DateOfBirth = new DateTime(1963, 2, 17), Savings = 1.31m * 1e9m };
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                {
+                    db.Insert(sourceUser);
+                    sourceUser.Name = "Michael Jeffrey Jordan";
+                    db.Update(sourceUser);
+                }
+
+                var synchronizer = new Synchronizer(TestConfig);
+                var success = synchronizer.Sync();
+
+                Assert.That(success, Is.True);
+
+                using (var db = GetDatabase(DestinationDatabaseName))
+                {
+                    var user = db.Single<User>("select * from Users");
+                    Assert.That(user.Name, Is.EqualTo(sourceUser.Name));
+                    Assert.That(user.Age, Is.EqualTo(sourceUser.Age));
+                    Assert.That(user.DateOfBirth, Is.EqualTo(sourceUser.DateOfBirth));
+                    Assert.That(user.Savings, Is.EqualTo(sourceUser.Savings));
+                }
+            }
+            finally
+            {
+                DropTable("Users");
+            }
+        }
+
+        [Test]
         public void MinimumVersionTest()
         {
             try
