@@ -389,17 +389,24 @@ namespace SyncChanges.Tests
                 CreateOrdersForeignKey(DestinationDatabaseName);
 
                 var sourceOrder = new Order();
+                var sourceOrder2 = new Order();
                 var sourceUser = new User { Name = "Michael Jordan", Age = 54, DateOfBirth = new DateTime(1963, 2, 17), Savings = 1.31m * 1e9m };
                 var sourceUser2 = new User { Name = "Larry Bird", Age = 60, DateOfBirth = new DateTime(1956, 12, 7), Savings = 45m * 1e6m };
+                var sourceUser3 = new User { Name = "Karl Malone", Age = 53, DateOfBirth = new DateTime(1963, 7, 24), Savings = 75m * 1e6m };
 
                 using (var db = GetDatabase(SourceDatabaseName))
                 {
                     db.Insert(sourceUser);
                     sourceOrder.UserId = sourceUser.UserId;
+                    sourceOrder2.UserId = sourceUser.UserId;
                     db.Insert(sourceOrder);
+                    db.Insert(sourceOrder2);
                     db.Insert(sourceUser2);
                     sourceOrder.UserId = sourceUser2.UserId;
                     db.Update(sourceOrder);
+                    db.Insert(sourceUser3);
+                    sourceOrder2.UserId = sourceUser3.UserId;
+                    db.Update(sourceOrder2);
                 }
 
                 var synchronizer = new Synchronizer(TestConfig);
@@ -409,8 +416,10 @@ namespace SyncChanges.Tests
 
                 using (var db = GetDatabase(DestinationDatabaseName))
                 {
-                    var order = db.Single<Order>("select * from Orders");
-                    Assert.That(order, Is.EqualTo(sourceOrder));
+                    var orders = db.Fetch<Order>("select * from Orders");
+                    Assert.That(orders.Count, Is.EqualTo(2));
+                    Assert.That(orders[0], Is.EqualTo(sourceOrder));
+                    Assert.That(orders[1], Is.EqualTo(sourceOrder2));
                 }
             }
             finally
