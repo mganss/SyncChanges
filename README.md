@@ -12,7 +12,7 @@ Motivation
 
 Microsoft SQL Server has a number of builtin synchronization features, such as Mirroring, Replication, and AlwaysOn Availability Groups. Unfortunately, all of these are only available from Standard Edition, and therefore not included in Web Edition or Express. The solution provided by SyncChanges, on the other hand, builds upon Change Tracking, which is available in all editions, including Web and Express.
 
-The use case SyncChanges was built for is a setup where you have a single database where all write operations go to (the source), and a number of other databases that are periodically kept in sync with the source (the destinations). All databases can be read from.
+The use case SyncChanges was built for is a setup where you have a single database that all write operations go to (the source), and a number of other databases that are periodically kept in sync with the source (the destinations). All databases can be read from.
 
 Usage
 -----
