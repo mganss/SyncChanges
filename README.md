@@ -62,7 +62,7 @@ A configuration file looks like this:
 Change Tracking
 ---------------
 
-Change Tracking must be enabled in the source database and the tables you want to replicate. This can be done either through SSMS or the following SQL ():
+Change Tracking must be enabled in the source database and the tables you want to replicate. This can be done either through SSMS or the following SQL:
 
 ```sql
 alter database Test
