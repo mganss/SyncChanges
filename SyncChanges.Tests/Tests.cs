@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using NUnit;
 using NUnit.Framework;
 using SyncChanges;
+using System.Threading;
 
 namespace SyncChanges.Tests
 {
@@ -511,6 +512,67 @@ namespace SyncChanges.Tests
             var synchronizer = new Synchronizer(config);
             synchronizer.Timeout = 1000;
             Assert.Throws<System.Data.SqlClient.SqlException>(() => synchronizer.Sync());
+        }
+
+        [Test]
+        public void LoopTest()
+        {
+            try
+            {
+                CreateUsersTable();
+
+                var sourceUsers = new List<User>
+                {
+                    new User { Name = "Michael Jordan", Age = 54, DateOfBirth = new DateTime(1963, 2, 17), Savings = 1.31m * 1e9m },
+                    new User { Name = "Larry Bird", Age = 60, DateOfBirth = new DateTime(1956, 12, 7), Savings = 45m * 1e6m },
+                    new User { Name = "Karl Malone", Age = 53, DateOfBirth = new DateTime(1963, 7, 24), Savings = 75m * 1e6m }
+                };
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                {
+                    foreach (var user in sourceUsers)
+                        db.Insert(user);
+                }
+
+                var synchronizer = new Synchronizer(TestConfig) { Interval = 2 };
+                var auto = new AutoResetEvent(false);
+                synchronizer.Synced += (s, e) => auto.Set();
+                var src = new CancellationTokenSource();
+                var t = Task.Factory.StartNew(() => synchronizer.SyncLoop(src.Token));
+
+                auto.WaitOne();
+
+                using (var db = GetDatabase(DestinationDatabaseName))
+                {
+                    var users = db.Fetch<User>("select * from Users");
+                    Assert.That(users, Is.EquivalentTo(sourceUsers));
+                }
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                {
+                    sourceUsers[0].Name = "Michael Jeffrey Jordan";
+                    sourceUsers[1].Name = "Larry Joe Bird";
+                    db.Update(sourceUsers[0]);
+                    db.Update(sourceUsers[1]);
+                    db.Delete(sourceUsers[2]);
+                    sourceUsers.Remove(sourceUsers[2]);
+                }
+
+                auto.WaitOne();
+
+                using (var db = GetDatabase(DestinationDatabaseName))
+                {
+                    var users = db.Fetch<User>("select * from Users");
+                    Assert.That(users, Is.EquivalentTo(sourceUsers));
+                }
+
+                src.Cancel();
+                t.Wait();
+            }
+            finally
+            {
+                DropTable("Users");
+            }
         }
     }
 }

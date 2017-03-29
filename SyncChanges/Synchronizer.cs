@@ -4,6 +4,7 @@ using NPoco;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 
 namespace SyncChanges
 {
@@ -28,6 +29,19 @@ namespace SyncChanges
         /// </value>
         public int Timeout { get; set; } = 0;
 
+        /// <summary>
+        /// Gets or sets the minimum synchronization time interval in seconds. Default is 30 seconds.
+        /// </summary>
+        /// <value>
+        /// The synchronization time interval in seconds.
+        /// </value>
+        public int Interval { get; set; } = 30;
+
+        /// <summary>
+        /// Occurs when synchronization from a synchronization loop has succeeded.
+        /// </summary>
+        public event EventHandler<SyncEventArgs> Synced;
+
         static Logger Log = LogManager.GetCurrentClassLogger();
         Config Config { get; set; }
         bool Error { get; set; }
@@ -43,6 +57,38 @@ namespace SyncChanges
             Config = config;
         }
 
+        private IList<IList<TableInfo>> Tables = new List<IList<TableInfo>>();
+        private bool Initialized = false;
+
+        /// <summary>
+        /// Initialize the synchronization process.
+        /// </summary>
+        public void Init()
+        {
+            if (Timeout != 0)
+                Log.Info($"Command timeout is {"second".ToQuantity(Timeout)}");
+
+            for (int i = 0; i < Config.ReplicationSets.Count; i++)
+            {
+                var replicationSet = Config.ReplicationSets[i];
+
+                Log.Info($"Getting replication information for replication set {replicationSet.Name}");
+
+                var tables = GetTables(replicationSet.Source);
+                if (replicationSet.Tables != null && replicationSet.Tables.Any())
+                    tables = tables.Where(t => replicationSet.Tables.Contains(t.Name.Trim('[', ']'))).ToList();
+
+                if (!tables.Any())
+                    Log.Warn("No tables to replicate (check if change tracking is enabled)");
+                else
+                    Log.Info($"Replicating {"table".ToQuantity(tables.Count, ShowQuantityAs.None)} {string.Join(", ", tables.Select(t => t.Name))}");
+
+                Tables.Add(tables);
+            }
+
+            Initialized = true;
+        }
+
         /// <summary>
         /// Perform the synchronization.
         /// </summary>
@@ -51,34 +97,98 @@ namespace SyncChanges
         {
             Error = false;
 
-            foreach (var replicationSet in Config.ReplicationSets)
+            if (!Initialized) Init();
+
+            for (int i = 0; i < Config.ReplicationSets.Count; i++)
             {
-                Log.Info($"Starting replication for replication set {replicationSet.Name}");
-                if (Timeout != 0)
-                    Log.Info($"Command timeout is {"second".ToQuantity(Timeout)}");
+                var replicationSet = Config.ReplicationSets[i];
+                var tables = Tables[i];
 
-                var tables = GetTables(replicationSet.Source);
-                if (replicationSet.Tables != null && replicationSet.Tables.Any())
-                    tables = tables.Where(t => replicationSet.Tables.Contains(t.Name.Trim('[', ']'))).ToList();
-
-                if (!tables.Any())
-                {
-                    Log.Warn("No tables to replicate (check if change tracking is enabled)");
-                    continue;
-                }
-
-                Log.Info($"Replicating {"table".ToQuantity(tables.Count, ShowQuantityAs.None)} {string.Join(", ", tables.Select(t => t.Name))}");
-
-                var destinationsByVersion = replicationSet.Destinations.GroupBy(d => GetCurrentVersion(d))
-                    .Where(d => d.Key >= 0).ToList();
-
-                foreach (var destinations in destinationsByVersion)
-                    Replicate(replicationSet.Source, destinations, tables);
+                Sync(replicationSet, tables);
             }
 
             Log.Info($"Finished replication {(Error ? "with" : "without")} errors");
 
             return !Error;
+        }
+
+        private bool Sync(ReplicationSet replicationSet, IList<TableInfo> tables)
+        {
+            Error = false;
+
+            if (!tables.Any()) return true;
+
+            Log.Info($"Starting replication for replication set {replicationSet.Name}");
+
+            var destinationsByVersion = replicationSet.Destinations.GroupBy(d => GetCurrentVersion(d))
+                .Where(d => d.Key >= 0).ToList();
+
+            foreach (var destinations in destinationsByVersion)
+                Replicate(replicationSet.Source, destinations, tables);
+
+            return !Error;
+        }
+
+        /// <summary>
+        /// Performs synchronization in an infinite loop. Periodically checks if source version has increased to trigger replication.
+        /// </summary>
+        /// <param name="token">The cancellation token.</param>
+        public void SyncLoop(CancellationToken token)
+        {
+            var currentVersions = Enumerable.Repeat(0L, Config.ReplicationSets.Count).ToList();
+
+            if (!Initialized) Init();
+
+            while (true)
+            {
+                if (token.IsCancellationRequested)
+                {
+                    Log.Info("Stopping replication.");
+                    return;
+                }
+
+                var start = DateTime.UtcNow;
+
+                for (int i = 0; i < Config.ReplicationSets.Count; i++)
+                {
+                    var replicationSet = Config.ReplicationSets[i];
+                    var currentVersion = currentVersions[i];
+                    long version = 0;
+
+                    try
+                    {
+                        using (var db = GetDatabase(replicationSet.Source.ConnectionString, DatabaseType.SqlServer2008))
+                            version = db.ExecuteScalar<long>("select CHANGE_TRACKING_CURRENT_VERSION()");
+
+                        Log.Debug($"Current version of source in replication set {replicationSet.Name} is {version}.");
+
+                        if (version > currentVersion)
+                        {
+                            Log.Info($"Current version of source in replication set {replicationSet.Name} has increased from {currentVersion} to {version}: Starting replication.");
+
+                            var tables = Tables[i];
+                            var success = Sync(replicationSet, tables);
+
+                            if (success) currentVersions[i] = version;
+
+                            Synced?.Invoke(this, new SyncEventArgs { ReplicationSet = replicationSet, Version = version });
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error(ex, $"Error occurred during replication of set {replicationSet.Name}.");
+                    }
+
+                    if (token.IsCancellationRequested)
+                    {
+                        Log.Info("Stopping replication.");
+                        return;
+                    }
+                }
+
+                var delay = Math.Max(0, (int)Math.Round((TimeSpan.FromSeconds(Interval) - (DateTime.UtcNow - start)).TotalSeconds, MidpointRounding.AwayFromZero));
+                Thread.Sleep(delay * 1000);
+            }
         }
 
         private IList<TableInfo> GetTables(DatabaseInfo dbInfo)

@@ -63,6 +63,7 @@
     <Compile Include="Config.cs" />
     <Compile Include="ForeignKeyConstraint.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="SyncEventArgs.cs" />
     <Compile Include="Synchronizer.cs" />
     <Compile Include="TableInfo.cs" />
   </ItemGroup>
