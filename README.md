@@ -28,6 +28,10 @@ Options:
   -d, --dryrun               Do not alter target databases, only perform a test
                                run
   -t, --timeout=VALUE        Database command timeout in seconds
+  -l, --loop                 Perform replication in a loop, periodically
+                               checking for changes
+  -i, --interval=VALUE       Replication interval in seconds (default is 30);
+                               only relevant in loop mode
 ```
 
 A configuration file looks like this:
