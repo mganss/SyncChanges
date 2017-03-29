@@ -109,7 +109,11 @@ namespace SyncChanges.Console
                     {
                         synchronizer.Interval = Interval;
                         var cancellationTokenSource = new CancellationTokenSource();
-                        System.Console.CancelKeyPress += (s, e) => cancellationTokenSource.Cancel();
+                        System.Console.CancelKeyPress += (s, e) =>
+                        {
+                            cancellationTokenSource.Cancel();
+                            e.Cancel = true;
+                        };
                         synchronizer.SyncLoop(cancellationTokenSource.Token);
                     }
                 }
