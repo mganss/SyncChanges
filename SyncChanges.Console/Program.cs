@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace SyncChanges.Console
@@ -18,6 +19,8 @@ namespace SyncChanges.Console
         bool DryRun;
         bool Error = false;
         int Timeout = 0;
+        bool Loop = false;
+        int Interval = 30;
 
         static int Main(string[] args)
         {
@@ -32,7 +35,9 @@ namespace SyncChanges.Console
                     var options = new OptionSet {
                         { "h|help", "Show this message and exit", v => showHelp = v != null },
                         { "d|dryrun", "Do not alter target databases, only perform a test run", v => program.DryRun = v != null },
-                        { "t|timeout=", "Database command timeout in seconds", (int v) => program.Timeout = v }
+                        { "t|timeout=", "Database command timeout in seconds", (int v) => program.Timeout = v },
+                        { "l|loop", "Perform replication in a loop, periodically checking for changes", v => program.Loop = v != null },
+                        { "i|interval=", "Replication interval in seconds (default is 30); only relevant in loop mode", (int v) => program.Interval = v },
                     };
 
                     program.ConfigFiles = options.Parse(args);
@@ -95,8 +100,18 @@ namespace SyncChanges.Console
                 try
                 {
                     var synchronizer = new Synchronizer(config) { DryRun = DryRun, Timeout = Timeout };
-                    var success = synchronizer.Sync();
-                    Error = Error || !success;
+                    if (!Loop)
+                    {
+                        var success = synchronizer.Sync();
+                        Error = Error || !success;
+                    }
+                    else
+                    {
+                        synchronizer.Interval = Interval;
+                        var cancellationTokenSource = new CancellationTokenSource();
+                        System.Console.CancelKeyPress += (s, e) => cancellationTokenSource.Cancel();
+                        synchronizer.SyncLoop(cancellationTokenSource.Token);
+                    }
                 }
                 catch (Exception ex)
                 {
