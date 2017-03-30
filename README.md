@@ -109,11 +109,29 @@ Logging
 
 SyncChanges uses [NLog](https://github.com/NLog/NLog). If you're using the console application, you can customize the `NLog.config` to your needs. The default configuration logs to the console as well as a daily rolling file `log.txt` in the same folder as the executable and keeps a maximum of 10 archived log files.
 
+Service
+-------
+
+In addition to the command line you can also run SyncChanges as a Windows service, The service periodically polls the value of [`CHANGE_TRACKING_CURRENT_VERSION`](https://docs.microsoft.com/en-us/sql/relational-databases/system-functions/change-tracking-current-version-transact-sql) in a configurable interval and starts replication if the version of the source has increased.
+
+The service expects a `config.json` configuration file in the same folder as the service executable. The desired polling interval can be configured in the `SyncChanges.Service.exe.config` file.
+
+To install the service, use the [InstallUtil.exe](https://msdn.microsoft.com/en-us/library/50614e95%28v=vs.110%29.aspx) tool that comes with the .NET Framework installation:
+
+```
+C:\Windows\Microsoft.NET\Framework64\v4.0.30319\InstallUtil.exe .\SyncChanges.Service.exe
+```
+
+To start the service:
+
+```
+net start SyncChangesService
+```
+
 Possible Improvements
 ----------------------------
 
 - Use some change notification mechanism to trigger replication
-- Run as a service
 - Use column change tracking
 - Apply large amount of changes in batches (of configurable size)
 - Parallelize replication to destinations
