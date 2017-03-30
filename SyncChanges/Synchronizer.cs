@@ -186,8 +186,8 @@ namespace SyncChanges
                     }
                 }
 
-                var delay = Math.Max(0, (int)Math.Round((TimeSpan.FromSeconds(Interval) - (DateTime.UtcNow - start)).TotalSeconds, MidpointRounding.AwayFromZero));
-                Thread.Sleep(delay * 1000);
+                var delay = (int)Math.Round(Math.Max(0, (TimeSpan.FromSeconds(Interval) - (DateTime.UtcNow - start)).TotalSeconds) * 1000, MidpointRounding.AwayFromZero);
+                Thread.Sleep(delay);
             }
         }
 
