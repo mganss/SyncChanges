@@ -122,7 +122,7 @@ To install the service, use the [InstallUtil.exe](https://msdn.microsoft.com/en-
 C:\Windows\Microsoft.NET\Framework64\v4.0.30319\InstallUtil.exe .\SyncChanges.Service.exe
 ```
 
-During installation, you have to enter credentials for the user account the service will use. This has to be  fully qualified name, e.g. if it's a local account enter `.\UserName`. This user has to have the necessary database permissions to carry out the replication process.
+During installation, you have to enter credentials for the user account the service will use. This has to be a fully qualified name, e.g. if it's a local account enter `.\UserName`. The user has to have the necessary database permissions to carry out the replication process.
 
 To start the service:
 
