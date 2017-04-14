@@ -148,6 +148,7 @@ namespace SyncChanges
                 }
 
                 var start = DateTime.UtcNow;
+                Error = false;
 
                 for (int i = 0; i < Config.ReplicationSets.Count; i++)
                 {
@@ -177,6 +178,7 @@ namespace SyncChanges
                     catch (Exception ex)
                     {
                         Log.Error(ex, $"Error occurred during replication of set {replicationSet.Name}.");
+                        Error = true;
                     }
 
                     if (token.IsCancellationRequested)
@@ -185,6 +187,8 @@ namespace SyncChanges
                         return;
                     }
                 }
+
+                Log.Info($"Finished replication {(Error ? "with" : "without")} errors");
 
                 var delay = (int)Math.Round(Math.Max(0, (TimeSpan.FromSeconds(Interval) - (DateTime.UtcNow - start)).TotalSeconds) * 1000, MidpointRounding.AwayFromZero);
                 Thread.Sleep(delay);
