@@ -112,7 +112,7 @@ SyncChanges uses [NLog](https://github.com/NLog/NLog). If you're using the conso
 Service
 -------
 
-In addition to the command line you can also run SyncChanges as a Windows service, The service periodically polls the value of [`CHANGE_TRACKING_CURRENT_VERSION`](https://docs.microsoft.com/en-us/sql/relational-databases/system-functions/change-tracking-current-version-transact-sql) in a configurable interval and starts replication if the version of the source has increased.
+In addition to the command line you can also run SyncChanges as a Windows service. The service periodically polls the value of [`CHANGE_TRACKING_CURRENT_VERSION`](https://docs.microsoft.com/en-us/sql/relational-databases/system-functions/change-tracking-current-version-transact-sql) in a configurable interval and starts replication if the version of the source has increased.
 
 The service expects a `config.json` configuration file in the same folder as the service executable. The desired polling interval can be configured in the `SyncChanges.Service.exe.config` file.
 
@@ -121,6 +121,8 @@ To install the service, use the [InstallUtil.exe](https://msdn.microsoft.com/en-
 ```
 C:\Windows\Microsoft.NET\Framework64\v4.0.30319\InstallUtil.exe .\SyncChanges.Service.exe
 ```
+
+During installation, you have to enter credentials for the user account the service will use. This has to be a fully qualified name, e.g. if it's a local account enter `.\UserName`. The user has to have the necessary database permissions to carry out the replication process.
 
 To start the service:
 
