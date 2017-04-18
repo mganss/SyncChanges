@@ -5,7 +5,7 @@ SyncChanges
 [![Build status](https://ci.appveyor.com/api/projects/status/pn3y41ltb8tcq4kk?svg=true)](https://ci.appveyor.com/project/mganss/syncchanges/branch/master)
 [![codecov.io](https://codecov.io/github/mganss/SyncChanges/coverage.svg?branch=master)](https://codecov.io/github/mganss/SyncChanges?branch=master)
 
-A console application and library to synchronize/replicate database changes based on SQL Server [Change Tracking](https://msdn.microsoft.com/en-us/library/bb933875.aspx).
+A Windows service, console application, and library to synchronize/replicate database changes based on SQL Server [Change Tracking](https://msdn.microsoft.com/en-us/library/bb933875.aspx).
 
 Motivation
 ----------
