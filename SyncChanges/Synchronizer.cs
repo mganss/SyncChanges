@@ -112,7 +112,7 @@ namespace SyncChanges
             return !Error;
         }
 
-        private bool Sync(ReplicationSet replicationSet, IList<TableInfo> tables)
+        private bool Sync(ReplicationSet replicationSet, IList<TableInfo> tables, long sourceVersion = -1)
         {
             Error = false;
 
@@ -121,7 +121,7 @@ namespace SyncChanges
             Log.Info($"Starting replication for replication set {replicationSet.Name}");
 
             var destinationsByVersion = replicationSet.Destinations.GroupBy(d => GetCurrentVersion(d))
-                .Where(d => d.Key >= 0).ToList();
+                .Where(d => d.Key >= 0 && (sourceVersion < 0 || d.Key < sourceVersion)).ToList();
 
             foreach (var destinations in destinationsByVersion)
                 Replicate(replicationSet.Source, destinations, tables);
@@ -168,7 +168,7 @@ namespace SyncChanges
                             Log.Info($"Current version of source in replication set {replicationSet.Name} has increased from {currentVersion} to {version}: Starting replication.");
 
                             var tables = Tables[i];
-                            var success = Sync(replicationSet, tables);
+                            var success = Sync(replicationSet, tables, version);
 
                             if (success) currentVersions[i] = version;
 
