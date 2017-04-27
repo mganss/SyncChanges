@@ -5,12 +5,12 @@ SyncChanges
 [![Build status](https://ci.appveyor.com/api/projects/status/pn3y41ltb8tcq4kk?svg=true)](https://ci.appveyor.com/project/mganss/syncchanges/branch/master)
 [![codecov.io](https://codecov.io/github/mganss/SyncChanges/coverage.svg?branch=master)](https://codecov.io/github/mganss/SyncChanges?branch=master)
 
-A console application and library to synchronize/replicate database changes based on SQL Server [Change Tracking](https://msdn.microsoft.com/en-us/library/bb933875.aspx).
+A Windows service, console application, and library to synchronize/replicate database changes based on SQL Server [Change Tracking](https://msdn.microsoft.com/en-us/library/bb933875.aspx).
 
 Motivation
 ----------
 
-Microsoft SQL Server has a number of builtin synchronization features, such as Mirroring, Replication, and AlwaysOn Availability Groups. Unfortunately, all of these are only available from Standard Edition, and therefore not included in Web Edition or Express. The solution provided by SyncChanges, on the other hand, builds upon Change Tracking, which is available in all editions, including Web and Express.
+Microsoft SQL Server has a number of builtin synchronization features, such as Mirroring, Replication, and AlwaysOn Availability Groups. Unfortunately, all of these are only available from Standard Edition, and therefore not included in Web Edition or Express. Log shipping has the drawback that the secondary databases are not accessible during the restore. The solution provided by SyncChanges, on the other hand, builds upon Change Tracking, which is available in all editions, including Web and Express.
 
 The use case SyncChanges was built for is a setup where you have a single database that all write operations go to (the source), and a number of other databases that are periodically kept in sync with the source (the destinations). All databases can be read from.
 
