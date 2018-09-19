@@ -15,7 +15,6 @@
   </metadata>
   <files>
     <file src="..\SyncChanges.Console\bin\Release\Humanizer.dll" target="tools\console" />
-    <file src="..\SyncChanges.Console\bin\Release\Humanizer.pdb" target="tools\console" />
     <file src="..\SyncChanges.Console\bin\Release\Humanizer.xml" target="tools\console" />
     <file src="..\SyncChanges.Console\bin\Release\Mono.Options.dll" target="tools\console" />
     <file src="..\SyncChanges.Console\bin\Release\Newtonsoft.Json.dll" target="tools\console" />
@@ -31,7 +30,6 @@
     <file src="..\SyncChanges.Console\bin\Release\SyncChanges.pdb" target="tools\console" />
     <file src="..\SyncChanges.Console\bin\Release\SyncChanges.xml" target="tools\console" />
     <file src="..\SyncChanges.Service\bin\Release\Humanizer.dll" target="tools\service" />
-    <file src="..\SyncChanges.Service\bin\Release\Humanizer.pdb" target="tools\service" />
     <file src="..\SyncChanges.Service\bin\Release\Humanizer.xml" target="tools\service" />
     <file src="..\SyncChanges.Service\bin\Release\Newtonsoft.Json.dll" target="tools\service" />
     <file src="..\SyncChanges.Service\bin\Release\Newtonsoft.Json.xml" target="tools\service" />
