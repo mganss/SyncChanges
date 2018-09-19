@@ -19,8 +19,7 @@ namespace SyncChanges
 
         public object GetValue(string columnName)
         {
-            object o;
-            if (!Keys.TryGetValue(columnName, out o))
+            if (!Keys.TryGetValue(columnName, out object o))
                 if (!Others.TryGetValue(columnName, out o))
                     return null;
             return o;

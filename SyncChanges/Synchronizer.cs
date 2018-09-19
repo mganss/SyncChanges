@@ -53,8 +53,7 @@ namespace SyncChanges
         /// <exception cref="System.ArgumentException"><paramref name="config"/> is null</exception>
         public Synchronizer(Config config)
         {
-            if (config == null) throw new ArgumentException("config is null", nameof(config));
-            Config = config;
+            Config = config ?? throw new ArgumentException("config is null", nameof(config));
         }
 
         private IList<IList<TableInfo>> Tables = new List<IList<TableInfo>>();
@@ -76,7 +75,9 @@ namespace SyncChanges
 
                 var tables = GetTables(replicationSet.Source);
                 if (replicationSet.Tables != null && replicationSet.Tables.Any())
-                    tables = tables.Where(t => replicationSet.Tables.Contains(t.Name.Trim('[', ']'))).ToList();
+                    tables = tables.Select(t => new { Table = t, Name = t.Name.Replace("[", "").Replace("]", "") })
+                        .Where(t => replicationSet.Tables.Any(r => r == t.Name || r == t.Name.Split('.')[1]))
+                        .Select(t => t.Table).ToList();
 
                 if (!tables.Any())
                     Log.Warn("No tables to replicate (check if change tracking is enabled)");
@@ -296,8 +297,7 @@ namespace SyncChanges
 
                                 foreach (var fk in change.ForeignKeyConstraintsToDisable)
                                 {
-                                    long untilVersion;
-                                    if (disabledForeignKeyConstraints.TryGetValue(fk.Key, out untilVersion))
+                                    if (disabledForeignKeyConstraints.TryGetValue(fk.Key, out long untilVersion))
                                     {
                                         // FK is already disabled, check if it needs to be deferred further than currently planned
                                         if (fk.Value > untilVersion)

@@ -55,7 +55,7 @@ namespace SyncChanges
         /// <value>
         /// The tables to be replicated.
         /// </value>
-        public List<string> Tables { get; set; }
+        public List<string> Tables { get; set; } = new List<string>();
     }
 
     /// <summary>
