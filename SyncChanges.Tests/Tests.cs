@@ -176,11 +176,12 @@ namespace SyncChanges.Tests
             }
         }
 
-        ReplicationSet TestReplicationSet = new ReplicationSet
+        readonly ReplicationSet TestReplicationSet = new ReplicationSet
         {
             Name = "Test",
             Source = new DatabaseInfo { Name = "Source", ConnectionString = GetConnectionString(SourceDatabaseName) },
-            Destinations = { new DatabaseInfo { Name = "Destination", ConnectionString = GetConnectionString(DestinationDatabaseName) } }
+            Destinations = { new DatabaseInfo { Name = "Destination", ConnectionString = GetConnectionString(DestinationDatabaseName) } },
+            Tables = { "Users", "dbo.Orders" }
         };
 
         Config TestConfig { get; set; }
@@ -490,8 +491,10 @@ namespace SyncChanges.Tests
             };
             var config = new Config { ReplicationSets = { rs } };
 
-            var synchronizer = new Synchronizer(config);
-            synchronizer.Timeout = 1000;
+            var synchronizer = new Synchronizer(config)
+            {
+                Timeout = 1000
+            };
             var success = synchronizer.Sync();
 
             Assert.That(success, Is.True);
@@ -509,8 +512,10 @@ namespace SyncChanges.Tests
             };
             var config = new Config { ReplicationSets = { rs } };
 
-            var synchronizer = new Synchronizer(config);
-            synchronizer.Timeout = 1000;
+            var synchronizer = new Synchronizer(config)
+            {
+                Timeout = 1000
+            };
             Assert.Throws<System.Data.SqlClient.SqlException>(() => synchronizer.Sync());
         }
 
