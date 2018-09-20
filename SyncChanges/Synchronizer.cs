@@ -3,6 +3,7 @@ using NLog;
 using NPoco;
 using System;
 using System.Collections.Generic;
+using System.Data.Common;
 using System.Linq;
 using System.Threading;
 
@@ -262,7 +263,7 @@ namespace SyncChanges
 
         private Database GetDatabase(string connectionString, DatabaseType databaseType = null)
         {
-            var db = new Database(connectionString, databaseType ?? DatabaseType.SqlServer2005);
+            var db = new Database(connectionString, databaseType ?? DatabaseType.SqlServer2005, System.Data.SqlClient.SqlClientFactory.Instance);
 
             if (Timeout != 0) db.CommandTimeout = Timeout;
 
