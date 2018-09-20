@@ -1,0 +1,22 @@
+{
+  "ReplicationSets": [
+    {
+      "Name": "Test",
+      "Source": {
+        "Name": "Primary",
+        "ConnectionString": "Data Source=primary.example.com;Initial Catalog=Test;Integrated Security=True;MultipleActiveResultSets=True"
+      },
+      "Destinations": [
+        {
+          "Name": "Secondary 1",
+          "ConnectionString": "Data Source=secondary1.example.com;Initial Catalog=Test;Integrated Security=True;MultipleActiveResultSets=True"
+        },
+        {
+          "Name": "Secondary 2",
+          "ConnectionString": "Data Source=secondary2.example.com;Initial Catalog=Test;Integrated Security=True;MultipleActiveResultSets=True"
+        }
+      ],
+      "Tables": [ "Table1", "Table2", "Table3" ]
+    }
+  ]
+}

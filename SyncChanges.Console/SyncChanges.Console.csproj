@@ -25,4 +25,9 @@
   <ItemGroup>
     <ProjectReference Include="..\SyncChanges\SyncChanges.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <None Update="config.example.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 </Project>
