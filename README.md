@@ -17,7 +17,7 @@ The use case SyncChanges was built for is a setup where you have a single databa
 Usage
 -----
 
-SyncChanges is currently designed as a console application that is typically invoked through a task scheduler every couple of minutes.
+SyncChanges can be used either as a console application that is typically invoked through a task scheduler every couple of minutes, as a Windows service, or as a library in your own applications. If you want to use the service or console application just grab a zip from [releases](https://github.com/mganss/SyncChanges/releases).
 
 ```
 Usage: SyncChanges [OPTION]... CONFIGFILE...
