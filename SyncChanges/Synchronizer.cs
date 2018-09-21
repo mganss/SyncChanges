@@ -57,7 +57,7 @@ namespace SyncChanges
             Config = config ?? throw new ArgumentException("config is null", nameof(config));
         }
 
-        private IList<IList<TableInfo>> Tables = new List<IList<TableInfo>>();
+        private IList<IList<TableInfo>> Tables { get; } = new List<IList<TableInfo>>();
         private bool Initialized = false;
 
         /// <summary>
@@ -288,7 +288,6 @@ namespace SyncChanges
                         try
                         {
                             var changes = changeInfo.Changes;
-                            var pendingChanges = new List<Change>();
                             var disabledForeignKeyConstraints = new Dictionary<ForeignKeyConstraint, long>();
 
                             for (int i = 0; i < changes.Count; i++)
@@ -515,13 +514,13 @@ namespace SyncChanges
             {
                 // Insert
                 case 'I':
-                    var insertColumnNames = change.ColumnNames;
+                    var insertColumnNames = change.GetColumnNames();
                     var insertSql = $"set IDENTITY_INSERT {tableName} ON; " +
                         string.Format("insert into {0} ({1}) values ({2}); ", tableName,
                         string.Join(", ", insertColumnNames),
                         string.Join(", ", Parameters(insertColumnNames.Count))) +
                         $"set IDENTITY_INSERT {tableName} OFF";
-                    var insertValues = change.Values;
+                    var insertValues = change.GetValues();
                     Log.Debug($"Executing insert: {insertSql} ({FormatArgs(insertValues)})");
                     if (!DryRun)
                         db.Execute(insertSql, insertValues);
@@ -533,7 +532,7 @@ namespace SyncChanges
                     var updateSql = string.Format("update {0} set {1} where {2}", tableName,
                         string.Join(", ", updateColumnNames.Select((c, i) => $"{c} = @{i + change.Keys.Count}")),
                         PrimaryKeys(table, change));
-                    var updateValues = change.Values;
+                    var updateValues = change.GetValues();
                     Log.Debug($"Executing update: {updateSql} ({FormatArgs(updateValues)})");
                     if (!DryRun)
                         db.Execute(updateSql, updateValues);
