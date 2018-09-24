@@ -4,6 +4,8 @@ image: Visual Studio 2017
 environment:
   access_token:
     secure: Eq6BjtZ80BXKLwFMg76IjuQAvbLjbojIF/X/ARouGVhxPneJtgDfCXMPNgJ7KBKq
+  sonar_token:
+    secure: W7pHKhuTW6Lh8WlXJNTOIaOzeuxLi+H6Nqmnm4pr28jM6jyIpOZ+1r10lIQi0eCA
 nuget:
   disable_publish_on_pr: true
 build_script:
@@ -21,7 +23,17 @@ build_script:
   - 7z a -mx=9 SyncChanges.Console.%APPVEYOR_BUILD_VERSION%.zip ".\SyncChanges.Console\bin\Release\net461\publish\*"
   - 7z a -mx=9 SyncChanges.Service.%APPVEYOR_BUILD_VERSION%.zip ".\SyncChanges.Service\bin\Release\net461\publish\*"
 test_script:
+  - ps: |
+      if (-not $env:APPVEYOR_PULL_REQUEST_NUMBER) {
+          dotnet tool install --global dotnet-sonarscanner
+          dotnet sonarscanner begin /k:"mganss_SyncChanges" /v:$env:APPVEYOR_BUILD_VERSION /d:sonar.organization="mganss-github" /d:sonar.host.url="https://sonarcloud.io" /d:sonar.login="$env:sonar_token" /d:sonar.cs.opencover.reportsPaths="$($env:APPVEYOR_BUILD_FOLDER)\coverage.xml" /d:sonar.coverage.exclusions="**/Program.cs,**/*.xsd"
+          dotnet build
+      }
   - dotnet test /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:CoverletOutput="..\coverage.xml" SyncChanges.Tests\SyncChanges.Tests.csproj /p:Include="[SyncChanges]*"
+  - ps: |
+      if (-not $env:APPVEYOR_PULL_REQUEST_NUMBER) {
+          dotnet sonarscanner end /d:sonar.login="$env:sonar_token"
+      }
   - pip install codecov
   - codecov -f "coverage.xml"
 artifacts:
