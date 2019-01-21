@@ -530,7 +530,7 @@ namespace SyncChanges
                 case 'U':
                     var updateColumnNames = change.Others.Keys.ToList();
                     var updateSql = string.Format("update {0} set {1} where {2}", tableName,
-                        string.Join(", ", updateColumnNames.Select((c, i) => $"{c} = @{i + change.Keys.Count}")),
+                        string.Join(", ", updateColumnNames.Select((c, i) => $"{c} = @{i + change.Others.Count}")),
                         PrimaryKeys(table, change));
                     var updateValues = change.GetValues();
                     Log.Debug($"Executing update: {updateSql} ({FormatArgs(updateValues)})");
