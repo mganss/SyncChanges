@@ -13,7 +13,7 @@
     </PackageReference>
     <PackageReference Include="NPoco" Version="3.9.4" />
     <PackageReference Include="NUnit" Version="3.10.1" />
-    <PackageReference Include="NUnit3TestAdapter" Version="3.10.0" />
+    <PackageReference Include="NUnit3TestAdapter" Version="3.13.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\SyncChanges\SyncChanges.csproj" />
