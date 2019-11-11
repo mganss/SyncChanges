@@ -20,7 +20,7 @@
     <RootNamespace>SyncChanges.Service</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Newtonsoft.Json" Version="12.0.2" />
+    <PackageReference Include="Newtonsoft.Json" Version="12.0.3" />
     <PackageReference Include="NLog" Version="4.6.8" />
     <PackageReference Include="NLog.Schema" Version="4.6.8" />
   </ItemGroup>
