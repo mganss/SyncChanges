@@ -25,6 +25,6 @@
     <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
     <PackageReference Include="NLog" Version="4.6.8" />
     <PackageReference Include="NPoco" Version="4.0.2" />
-    <PackageReference Include="System.Data.SqlClient" Version="4.8.0" />
+    <PackageReference Include="System.Data.SqlClient" Version="4.8.1" />
   </ItemGroup>
 </Project>
