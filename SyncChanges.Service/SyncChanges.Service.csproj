@@ -22,7 +22,7 @@
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="12.0.3" />
     <PackageReference Include="NLog" Version="4.7.1" />
-    <PackageReference Include="NLog.Schema" Version="4.7.0" />
+    <PackageReference Include="NLog.Schema" Version="4.7.1" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\SyncChanges\SyncChanges.csproj" />
