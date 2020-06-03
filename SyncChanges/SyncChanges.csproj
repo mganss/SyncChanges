@@ -21,7 +21,7 @@
     <DocumentationFile>bin\$(Configuration)\$(TargetFramework)\SyncChanges.xml</DocumentationFile>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Humanizer.Core" Version="2.8.11" />
+    <PackageReference Include="Humanizer.Core" Version="2.8.26" />
     <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
     <PackageReference Include="NLog" Version="4.7.2" />
     <PackageReference Include="NPoco" Version="4.0.2" />
