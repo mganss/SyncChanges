@@ -35,9 +35,9 @@ test_script:
   - pip install codecov
   - codecov -f "coverage.xml"
 artifacts:
-  - path: 'SyncChanges\**\*.nupkg'
-  - path: 'SyncChanges.Console\**\*.nupkg'
-  - path: 'SyncChanges.Service\**\*.nupkg'
+  - path: 'SyncChanges\**\*.*nupkg'
+  - path: 'SyncChanges.Console\**\*.*nupkg'
+  - path: 'SyncChanges.Service\**\*.*nupkg'
   - path: SyncChanges.Console.%APPVEYOR_BUILD_VERSION%.zip
   - path: SyncChanges.Service.%APPVEYOR_BUILD_VERSION%.zip
 on_success:
