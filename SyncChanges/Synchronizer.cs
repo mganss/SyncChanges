@@ -43,7 +43,7 @@ namespace SyncChanges
         /// </summary>
         public event EventHandler<SyncEventArgs> Synced;
 
-        static Logger Log = LogManager.GetCurrentClassLogger();
+        static readonly Logger Log = LogManager.GetCurrentClassLogger();
         Config Config { get; set; }
         bool Error { get; set; }
 
@@ -531,7 +531,7 @@ namespace SyncChanges
                     var updateColumnNames = change.Others.Keys.ToList();
                     var updateSql = string.Format("update {0} set {1} where {2}", tableName,
                         string.Join(", ", updateColumnNames.Select((c, i) => $"{c} = @{i + change.Keys.Count}")),
-                        PrimaryKeys(table, change));
+                        PrimaryKeys(change));
                     var updateValues = change.GetValues();
                     Log.Debug($"Executing update: {updateSql} ({FormatArgs(updateValues)})");
                     if (!DryRun)
@@ -540,7 +540,7 @@ namespace SyncChanges
 
                 // Delete
                 case 'D':
-                    var deleteSql = string.Format("delete from {0} where {1}", tableName, PrimaryKeys(table, change));
+                    var deleteSql = string.Format("delete from {0} where {1}", tableName, PrimaryKeys(change));
                     var deleteValues = change.Keys.Values.ToArray();
                     Log.Debug($"Executing delete: {deleteSql} ({FormatArgs(deleteValues)})");
                     if (!DryRun)
@@ -551,7 +551,7 @@ namespace SyncChanges
 
         private static string FormatArgs(object[] args) => string.Join(", ", args.Select((a, i) => $"@{i} = {a}"));
 
-        private static string PrimaryKeys(TableInfo table, Change change) =>
+        private static string PrimaryKeys(Change change) =>
             string.Join(" and ", change.Keys.Keys.Select((c, i) => $"{c} = @{i}"));
 
         private static IEnumerable<string> Parameters(int n) => Enumerable.Range(0, n).Select(c => "@" + c);

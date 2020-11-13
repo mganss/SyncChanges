@@ -18,8 +18,8 @@ namespace SyncChanges.Tests
         const string SourceDatabaseName = "SyncChangesTestSource";
         const string DestinationDatabaseName = "SyncChangesTestDestination";
 
-        static string GetConnectionString(string db = "") => ConnectionString + (db != "" ? $";Initial Catalog={db}" : "");
-        static Database GetDatabase(string db = "") => new Database(GetConnectionString(db), DatabaseType.SqlServer2012);
+        static string GetConnectionString(string db = "") => ConnectionString + (db.Length > 0 ? $";Initial Catalog={db}" : "");
+        static Database GetDatabase(string db = "") => new Database(GetConnectionString(db), DatabaseType.SqlServer2012, System.Data.SqlClient.SqlClientFactory.Instance);
 
         static void DropDatabase(string name)
         {
