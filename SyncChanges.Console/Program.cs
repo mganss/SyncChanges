@@ -13,7 +13,7 @@ namespace SyncChanges.Console
 {
     class Program
     {
-        static Logger Log = LogManager.GetCurrentClassLogger();
+        static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
         List<string> ConfigFiles;
         bool DryRun;
@@ -108,7 +108,7 @@ namespace SyncChanges.Console
                     else
                     {
                         synchronizer.Interval = Interval;
-                        var cancellationTokenSource = new CancellationTokenSource();
+                        using var cancellationTokenSource = new CancellationTokenSource();
                         System.Console.CancelKeyPress += (s, e) =>
                         {
                             cancellationTokenSource.Cancel();
