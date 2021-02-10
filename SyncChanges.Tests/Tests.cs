@@ -40,6 +40,7 @@ namespace SyncChanges.Tests
             using (var db = GetDatabase())
             {
                 db.Execute($"create database [{name}]");
+                db.Execute($"alter database [{name}] set COMPATIBILITY_LEVEL = 100");
                 db.Execute($"alter database [{name}] set CHANGE_TRACKING = ON (CHANGE_RETENTION = 2 DAYS, AUTO_CLEANUP = ON)");
                 if ((string)TestContext.CurrentContext.Test.Properties.Get("snapshot") != "off")
                 {
