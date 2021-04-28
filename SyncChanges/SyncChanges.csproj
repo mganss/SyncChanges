@@ -24,7 +24,7 @@
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Humanizer.Core" Version="2.8.26" />
+    <PackageReference Include="Humanizer.Core" Version="2.9.9" />
     <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
     <PackageReference Include="NLog" Version="4.7.9" />
     <PackageReference Include="NPoco" Version="5.1.2" />
