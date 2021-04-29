@@ -203,10 +203,11 @@ namespace SyncChanges
             {
                 using (var db = GetDatabase(dbInfo.ConnectionString, DatabaseType.SqlServer2008))
                 {
-                    var sql = @"select TableName, ColumnName, coalesce(max(cast(is_primary_key as tinyint)), 0) PrimaryKey from
+                    var sql = @"select TableName, ColumnName, coalesce(max(cast(is_primary_key as tinyint)), 0) PrimaryKey,
+                        coalesce(max(cast(is_identity as tinyint)), 0) IsIdentity from
                         (
                         select ('[' + s.name + '].[' + t.name + ']') TableName, ('[' + COL_NAME(t.object_id, a.column_id) + ']') ColumnName,
-                        i.is_primary_key
+                        i.is_primary_key, a.is_identity
                         from sys.change_tracking_tables tr
                         join sys.tables t on t.object_id = tr.object_id
                         join sys.schemas s on s.schema_id = t.schema_id
@@ -223,7 +224,8 @@ namespace SyncChanges
                         {
                             Name = (string)g.Key,
                             KeyColumns = g.Where(c => (int)c.PrimaryKey > 0).Select(c => (string)c.ColumnName).ToList(),
-                            OtherColumns = g.Where(c => (int)c.PrimaryKey == 0).Select(c => (string)c.ColumnName).ToList()
+                            OtherColumns = g.Where(c => (int)c.PrimaryKey == 0).Select(c => (string)c.ColumnName).ToList(),
+                            HasIdentity = g.Any(c => (int)c.IsIdentity  > 0)
                         }).ToList();
 
                     var fks = db.Fetch<ForeignKeyConstraint>(@"select obj.name AS ForeignKeyName,
@@ -515,12 +517,12 @@ namespace SyncChanges
                 // Insert
                 case 'I':
                     var insertColumnNames = change.GetColumnNames();
-                    var insertSql = $"set IDENTITY_INSERT {tableName} ON; " +
-                        string.Format("insert into {0} ({1}) values ({2}); ", tableName,
+                    var insertSql = string.Format("insert into {0} ({1}) values ({2})", tableName,
                         string.Join(", ", insertColumnNames),
-                        string.Join(", ", Parameters(insertColumnNames.Count))) +
-                        $"set IDENTITY_INSERT {tableName} OFF";
+                        string.Join(", ", Parameters(insertColumnNames.Count)));
                     var insertValues = change.GetValues();
+                    if (table.HasIdentity)
+                        insertSql = $"set IDENTITY_INSERT {tableName} ON; {insertSql}; set IDENTITY_INSERT {tableName} OFF";
                     Log.Debug($"Executing insert: {insertSql} ({FormatArgs(insertValues)})");
                     if (!DryRun)
                         db.Execute(insertSql, insertValues);

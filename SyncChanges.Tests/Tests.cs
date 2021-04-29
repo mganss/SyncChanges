@@ -88,7 +88,7 @@ namespace SyncChanges.Tests
             using (var db = GetDatabase(dbName))
             {
                 db.Execute(@"if not exists (select * from sys.tables where name = 'Orders') create table Orders (
-                    OrderId int identity(1,1) primary key not null,
+                    OrderId int primary key not null,
                     UserId int not null
                 )");
                 db.Execute(@"alter table Orders
@@ -156,7 +156,7 @@ namespace SyncChanges.Tests
         }
 
         [TableName("Orders")]
-        [PrimaryKey("OrderId")]
+        [PrimaryKey("OrderId", AutoIncrement = false)]
         class Order
         {
             public int OrderId { get; set; }
@@ -392,7 +392,7 @@ namespace SyncChanges.Tests
                 CreateOrdersForeignKey(SourceDatabaseName);
                 CreateOrdersForeignKey(DestinationDatabaseName);
 
-                var sourceOrder = new Order();
+                var sourceOrder = new Order { OrderId = 1 };
                 var sourceUser = new User { Name = "Michael Jordan", Age = 54, DateOfBirth = new DateTime(1963, 2, 17), Savings = 1.31m * 1e9m };
 
                 using (var db = GetDatabase(SourceDatabaseName))
@@ -433,8 +433,8 @@ namespace SyncChanges.Tests
                 CreateOrdersForeignKey(SourceDatabaseName);
                 CreateOrdersForeignKey(DestinationDatabaseName);
 
-                var sourceOrder = new Order();
-                var sourceOrder2 = new Order();
+                var sourceOrder = new Order { OrderId = 1 };
+                var sourceOrder2 = new Order { OrderId = 2 };
                 var sourceUser = new User { Name = "Michael Jordan", Age = 54, DateOfBirth = new DateTime(1963, 2, 17), Savings = 1.31m * 1e9m };
                 var sourceUser2 = new User { Name = "Larry Bird", Age = 60, DateOfBirth = new DateTime(1956, 12, 7), Savings = 45m * 1e6m };
                 var sourceUser3 = new User { Name = "Karl Malone", Age = 53, DateOfBirth = new DateTime(1963, 7, 24), Savings = 75m * 1e6m };
