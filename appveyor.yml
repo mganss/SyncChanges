@@ -70,4 +70,4 @@ for:
     - dotnet --info
     - dotnet restore
     - dotnet build -c Release
-    - dotnet SyncChanges.Tests\SyncChanges.Tests.csproj /p:Include="[SyncChanges]*"
+    - dotnet test SyncChanges.Tests\SyncChanges.Tests.csproj /p:Include="[SyncChanges]*"
