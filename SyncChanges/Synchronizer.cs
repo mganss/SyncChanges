@@ -177,11 +177,13 @@ namespace SyncChanges
                             Synced?.Invoke(this, new SyncEventArgs { ReplicationSet = replicationSet, Version = version });
                         }
                     }
+#pragma warning disable CA1031 // Do not catch general exception types
                     catch (Exception ex)
                     {
                         Log.Error(ex, $"Error occurred during replication of set {replicationSet.Name}.");
                         Error = true;
                     }
+#pragma warning restore CA1031 // Do not catch general exception types
 
                     if (token.IsCancellationRequested)
                     {
@@ -332,18 +334,22 @@ namespace SyncChanges
 
                             Log.Info($"Destination {destination.Name} now at version {changeInfo.Version}");
                         }
+#pragma warning disable CA1031 // Do not catch general exception types
                         catch (Exception ex)
                         {
                             Error = true;
                             Log.Error(ex, $"Error replicating changes to destination {destination.Name}");
                         }
+#pragma warning restore CA1031 // Do not catch general exception types
                     }
                 }
+#pragma warning disable CA1031 // Do not catch general exception types
                 catch (Exception ex)
                 {
                     Error = true;
                     Log.Error(ex, $"Error replicating changes to destination {destination.Name}");
                 }
+#pragma warning restore CA1031 // Do not catch general exception types
             }
         }
 
@@ -588,12 +594,14 @@ namespace SyncChanges
                     return currentVersion;
                 }
             }
+#pragma warning disable CA1031 // Do not catch general exception types
             catch (Exception ex)
             {
                 Log.Error(ex, $"Error getting current version of destination database {dbInfo.Name}. Skipping this destination.");
                 Error = true;
                 return -1;
             }
+#pragma warning restore CA1031 // Do not catch general exception types
         }
     }
 }

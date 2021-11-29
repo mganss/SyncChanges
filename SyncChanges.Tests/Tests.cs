@@ -19,34 +19,30 @@ namespace SyncChanges.Tests
         const string DestinationDatabaseName = "SyncChangesTestDestination";
 
         static string GetConnectionString(string db = "") => ConnectionString + (db.Length > 0 ? $";Initial Catalog={db}" : "");
-        static Database GetDatabase(string db = "") => new Database(GetConnectionString(db), DatabaseType.SqlServer2012, System.Data.SqlClient.SqlClientFactory.Instance);
+        static Database GetDatabase(string db = "") => new(GetConnectionString(db), DatabaseType.SqlServer2012, System.Data.SqlClient.SqlClientFactory.Instance);
 
         static void DropDatabase(string name)
         {
-            using (var db = GetDatabase())
-            {
-                var sql = $@"if (exists(select name from master.dbo.sysdatabases where name = '{name}'))
+            using var db = GetDatabase();
+            var sql = $@"if (exists(select name from master.dbo.sysdatabases where name = '{name}'))
                 begin
                     alter database [{name}]
                     set single_user with rollback immediate
                     drop database [{name}]
                 end";
-                db.Execute(sql);
-            }
+            db.Execute(sql);
         }
 
         private static void CreateDatabase(string name)
         {
-            using (var db = GetDatabase())
+            using var db = GetDatabase();
+            db.Execute($"create database [{name}]");
+            db.Execute($"alter database [{name}] set COMPATIBILITY_LEVEL = 100");
+            db.Execute($"alter database [{name}] set CHANGE_TRACKING = ON (CHANGE_RETENTION = 2 DAYS, AUTO_CLEANUP = ON)");
+            if ((string)TestContext.CurrentContext.Test.Properties.Get("snapshot") != "off")
             {
-                db.Execute($"create database [{name}]");
-                db.Execute($"alter database [{name}] set COMPATIBILITY_LEVEL = 100");
-                db.Execute($"alter database [{name}] set CHANGE_TRACKING = ON (CHANGE_RETENTION = 2 DAYS, AUTO_CLEANUP = ON)");
-                if ((string)TestContext.CurrentContext.Test.Properties.Get("snapshot") != "off")
-                {
-                    db.Execute($"ALTER DATABASE [{name}] SET ALLOW_SNAPSHOT_ISOLATION ON");
-                    db.Execute($"ALTER DATABASE [{name}] SET READ_COMMITTED_SNAPSHOT ON");
-                }
+                db.Execute($"ALTER DATABASE [{name}] SET ALLOW_SNAPSHOT_ISOLATION ON");
+                db.Execute($"ALTER DATABASE [{name}] SET READ_COMMITTED_SNAPSHOT ON");
             }
         }
 
@@ -66,64 +62,60 @@ namespace SyncChanges.Tests
             DropDatabase(DestinationDatabaseName);
         }
 
-        void CreateUsersTable(string dbName)
+        static void CreateUsersTable(string dbName)
         {
-            using (var db = GetDatabase(dbName))
-            {
-                db.Execute(@"if not exists (select * from sys.tables where name = 'Users') create table Users (
+            using var db = GetDatabase(dbName);
+            db.Execute(@"if not exists (select * from sys.tables where name = 'Users') create table Users (
                     UserId int identity(1,1) primary key not null,
                     Name nvarchar(200) null,
                     Age int null,
                     DateOfBirth datetime null,
                     Savings decimal null
                 )");
-                db.Execute(@"alter table Users
+            db.Execute(@"alter table Users
                     enable CHANGE_TRACKING
                     with (TRACK_COLUMNS_UPDATED = OFF)");
-            }
         }
 
-        void CreateOrdersTable(string dbName)
+        static void CreateOrdersTable(string dbName)
         {
-            using (var db = GetDatabase(dbName))
-            {
-                db.Execute(@"if not exists (select * from sys.tables where name = 'Orders') create table Orders (
+            using var db = GetDatabase(dbName);
+            db.Execute(@"if not exists (select * from sys.tables where name = 'Orders') create table Orders (
                     OrderId int primary key not null,
                     UserId int not null
                 )");
-                db.Execute(@"alter table Orders
+            db.Execute(@"alter table Orders
                     enable CHANGE_TRACKING
                     with (TRACK_COLUMNS_UPDATED = OFF)");
-            }
         }
 
-        void CreateOrdersForeignKey(string dbName)
+        static void CreateOrdersForeignKey(string dbName)
         {
-            using (var db = GetDatabase(dbName))
-                db.Execute(@"alter table Orders add constraint Orders_UserId_FK foreign key (UserId) references Users(UserId)");
+            using var db = GetDatabase(dbName);
+            db.Execute(@"alter table Orders add constraint Orders_UserId_FK foreign key (UserId) references Users(UserId)");
         }
 
-        void DropTable(string dbName, string tableName)
+        static void DropTable(string dbName, string tableName)
         {
-            using (var db = GetDatabase(dbName))
-                db.Execute($@"if exists (select * from sys.tables where name = '{tableName}') drop table {tableName}");
+            using var db = GetDatabase(dbName);
+            db.Execute($@"if exists (select * from sys.tables where name = '{tableName}') drop table {tableName}");
         }
 
-        void CreateUsersTable()
+        static void CreateUsersTable()
         {
             DropTable("Users");
             CreateUsersTable(SourceDatabaseName);
             CreateUsersTable(DestinationDatabaseName);
         }
 
-        void CreateOrdersTable()
+        static void CreateOrdersTable()
         {
             DropTable("Orders");
             CreateOrdersTable(SourceDatabaseName);
             CreateOrdersTable(DestinationDatabaseName);
         }
 
-        void DropTable(string tableName)
+        static void DropTable(string tableName)
         {
             DropTable(SourceDatabaseName, tableName);
             DropTable(DestinationDatabaseName, tableName);
@@ -177,7 +169,7 @@ namespace SyncChanges.Tests
             }
         }
 
-        readonly ReplicationSet TestReplicationSet = new ReplicationSet
+        readonly ReplicationSet TestReplicationSet = new()
         {
             Name = "Test",
             Source = new DatabaseInfo { Name = "Source", ConnectionString = GetConnectionString(SourceDatabaseName) },
@@ -256,11 +248,9 @@ namespace SyncChanges.Tests
 
                 if (!dryRun)
                 {
-                    using (var db = GetDatabase(DestinationDatabaseName))
-                    {
-                        var users = db.Fetch<User>("select * from Users");
-                        Assert.That(users, Is.EquivalentTo(sourceUsers));
-                    }
+                    using var db = GetDatabase(DestinationDatabaseName);
+                    var users = db.Fetch<User>("select * from Users");
+                    Assert.That(users, Is.EquivalentTo(sourceUsers));
                 }
 
                 using (var db = GetDatabase(SourceDatabaseName))
@@ -279,11 +269,9 @@ namespace SyncChanges.Tests
 
                 if (!dryRun)
                 {
-                    using (var db = GetDatabase(DestinationDatabaseName))
-                    {
-                        var users = db.Fetch<User>("select * from Users");
-                        Assert.That(users, Is.EquivalentTo(sourceUsers));
-                    }
+                    using var db = GetDatabase(DestinationDatabaseName);
+                    var users = db.Fetch<User>("select * from Users");
+                    Assert.That(users, Is.EquivalentTo(sourceUsers));
                 }
             }
             finally
