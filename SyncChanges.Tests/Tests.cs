@@ -72,6 +72,7 @@ namespace SyncChanges.Tests
                     DateOfBirth datetime null,
                     Savings decimal null
                 )");
+            db.Execute(@"alter table Users add constraint Users_Name_Age_UQ unique (Name, Age)");
             db.Execute(@"alter table Users
                     enable CHANGE_TRACKING
                     with (TRACK_COLUMNS_UPDATED = OFF)");
@@ -458,6 +459,53 @@ namespace SyncChanges.Tests
             finally
             {
                 DropTable("Orders");
+                DropTable("Users");
+            }
+        }
+
+        [Test]
+        public void UniqueTest()
+        {
+            try
+            {
+                CreateUsersTable();
+
+                var sourceUser = new User { Name = "Michael Jordan", Age = 54, DateOfBirth = new DateTime(1963, 2, 17), Savings = 1.31m * 1e9m };
+                var sourceUser2 = new User { Name = "Michael Jordan", Age = 55, DateOfBirth = new DateTime(1963, 2, 17), Savings = 1.31m * 1e9m };
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                {
+                    db.Insert(sourceUser);
+                }
+
+                var synchronizer = new Synchronizer(TestConfig);
+                var success = synchronizer.Sync();
+
+                Assert.That(success, Is.True);
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                {
+                    db.Insert(sourceUser2);
+                    sourceUser.Age = 56;
+                    db.Update(sourceUser);
+                    sourceUser2.Age = 54;
+                    db.Update(sourceUser2);
+                }
+
+                success = synchronizer.Sync();
+
+                Assert.That(success, Is.True);
+
+                using (var db = GetDatabase(DestinationDatabaseName))
+                {
+                    var users = db.Fetch<User>("select * from Users");
+                    Assert.That(users.Count, Is.EqualTo(2));
+                    Assert.That(users[0].Age, Is.EqualTo(56));
+                    Assert.That(users[1].Age, Is.EqualTo(54));
+                }
+            }
+            finally
+            {
                 DropTable("Users");
             }
         }
