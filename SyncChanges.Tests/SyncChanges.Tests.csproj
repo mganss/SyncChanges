@@ -3,6 +3,9 @@
     <TargetFramework>net6.0</TargetFramework>
     <SonarQubeExclude>true</SonarQubeExclude>
     <IsTestProject>true</IsTestProject>
+	<CoverletOutputFormat>opencover</CoverletOutputFormat>
+	<CoverletOutput>../coverage.xml</CoverletOutput>
+	<Include>[SyncChanges]*</Include>
   </PropertyGroup>
   <ItemGroup>
     <Folder Include="Properties\" />
