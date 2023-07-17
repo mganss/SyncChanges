@@ -77,7 +77,7 @@ namespace SyncChanges
                 var tables = GetTables(replicationSet.Source);
                 if (replicationSet.Tables != null && replicationSet.Tables.Any())
                     tables = tables.Select(t => new { Table = t, Name = t.Name.Replace("[", "").Replace("]", "") })
-                        .Where(t => replicationSet.Tables.Any(r => r == t.Name || r == t.Name.Split('.')[1]))
+                        .Where(t => replicationSet.Tables.Exists(r => r == t.Name || r == t.Name.Split('.')[1]))
                         .Select(t => t.Table).ToList();
 
                 if (!tables.Any())

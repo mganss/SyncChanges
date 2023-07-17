@@ -8,6 +8,7 @@ using NUnit;
 using NUnit.Framework;
 using SyncChanges;
 using System.Threading;
+using System.Xml.Linq;
 
 namespace SyncChanges.Tests
 {
@@ -183,6 +184,64 @@ namespace SyncChanges.Tests
         public Tests()
         {
             TestConfig = new Config { ReplicationSets = { TestReplicationSet } };
+        }
+
+        [TableName("Users")]
+        [PrimaryKey("NUM_TRF", AutoIncrement = false)]
+        class VarBinaryUser
+        {
+            public int Num_Trf { get; set; }
+            public string Name { get; set; }
+            public string Description { get; set; }
+            public byte[] Report { get; set; }
+        }
+
+        [Test]
+        public void VarBinaryTest()
+        {
+            try
+            {
+                static void CreateUsersTable(string dbName)
+                {
+                    using var db = GetDatabase(dbName);
+                    db.Execute(@"if not exists (select * from sys.tables where name = 'Users') create table Users (
+                        NUM_TRF int primary key not null,
+                        NAME varchar(255),
+                        DESCRIPTION varchar(1000),
+                        REPORT varbinary(max)
+                    )");
+                    db.Execute(@"alter table Users
+                        enable CHANGE_TRACKING
+                        with (TRACK_COLUMNS_UPDATED = OFF)");
+                }
+
+                DropTable("Users");
+                CreateUsersTable(SourceDatabaseName);
+                CreateUsersTable(DestinationDatabaseName);
+
+                var sourceUser = new VarBinaryUser { Num_Trf = 1, Name = "Test", Description = "Test Description", Report = new byte[] { 1, 2, 3, 4 } };
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                {
+                    db.Insert(sourceUser);
+                    sourceUser.Name = "Michael Jeffrey Jordan";
+                    db.Update(sourceUser);
+                }
+
+                var synchronizer = new Synchronizer(TestConfig);
+                var success = synchronizer.Sync();
+
+                Assert.That(success, Is.True);
+
+                using (var db = GetDatabase(DestinationDatabaseName))
+                {
+                    var user = db.Single<VarBinaryUser>("select * from Users");
+                }
+            }
+            finally
+            {
+                DropTable("Users");
+            }
         }
 
         [Test]
