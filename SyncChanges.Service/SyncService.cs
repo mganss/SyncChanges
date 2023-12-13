@@ -9,6 +9,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.ServiceProcess;
 using System.Text;
 using System.Threading;
@@ -18,7 +19,7 @@ namespace SyncChanges.Service
 {
     public partial class SyncChanges : ServiceBase
     {
-        static Logger Log = LogManager.GetCurrentClassLogger();
+        static readonly Logger Log = LogManager.GetCurrentClassLogger();
         private Synchronizer Synchronizer;
         private CancellationTokenSource CancellationTokenSource;
         private Task SyncTask;
@@ -50,7 +51,7 @@ namespace SyncChanges.Service
                 var interval = int.Parse(ConfigurationManager.AppSettings["Interval"]);
                 var dryRun = ConfigurationManager.AppSettings["DryRun"].Equals("true", StringComparison.OrdinalIgnoreCase);
 
-                CancellationTokenSource = new CancellationTokenSource();
+                CancellationTokenSource = new();
                 Synchronizer = new Synchronizer(config) { Timeout = timeout, Interval = interval, DryRun = dryRun };
                 SyncTask = Task.Factory.StartNew(() => Synchronizer.SyncLoop(CancellationTokenSource.Token), TaskCreationOptions.LongRunning);
                 await SyncTask;

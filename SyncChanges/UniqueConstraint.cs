@@ -14,7 +14,7 @@ namespace SyncChanges
     class UniqueConstraint
     {
         public string TableName { get; set; }
-        public List<string> ColumnNames { get; set; } = new();
+        public List<string> ColumnNames { get; set; } = [];
         public string IndexName { get; set; }
         public string FullName => TableName + ":" + string.Join("_", ColumnNames);
         public bool IsConstraint { get; set; }
