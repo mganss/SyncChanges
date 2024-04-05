@@ -387,7 +387,7 @@ namespace SyncChanges
         private void ReenableForeignKeyConstraint(Database db, ForeignKeyConstraint fk)
         {
             Log.Debug($"Re-enabling foreign key constraint {fk.ForeignKeyName}");
-            var sql = $"alter table {fk.TableName} with check check constraint {fk.ForeignKeyName}";
+            var sql = $"alter table {fk.TableName} with check check constraint [{fk.ForeignKeyName}]";
             if (!DryRun)
                 db.Execute(sql);
         }
@@ -395,7 +395,7 @@ namespace SyncChanges
         private void DisableForeignKeyConstraint(Database db, ForeignKeyConstraint fk)
         {
             Log.Debug($"Disabling foreign key constraint {fk.ForeignKeyName}");
-            var sql = $"alter table {fk.TableName} nocheck constraint {fk.ForeignKeyName}";
+            var sql = $"alter table {fk.TableName} nocheck constraint [{fk.ForeignKeyName}]";
             if (!DryRun)
                 db.Execute(sql);
         }
