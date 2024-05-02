@@ -457,7 +457,7 @@ namespace SyncChanges
                         from CHANGETABLE (CHANGES {tableName}, @0) c
                         left outer join {tableName} t on ";
                     sql += string.Join(" and ", table.KeyColumns.Select(k => $"c.{k} = t.{k}"));
-                    sql += " order by coalesce(c.SYS_CHANGE_CREATION_VERSION, c.SYS_CHANGE_VERSION)";
+                    sql += " order by coalesce(c.SYS_CHANGE_CREATION_VERSION, c.SYS_CHANGE_VERSION), c.SYS_CHANGE_OPERATION";
 
                     Log.Debug($"Retrieving changes for table {tableName}: {sql}");
 
