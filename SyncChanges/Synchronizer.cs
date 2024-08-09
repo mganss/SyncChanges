@@ -12,7 +12,12 @@ namespace SyncChanges
     /// <summary>
     /// Allows replication of database changes from a source database to one or more destination databases.
     /// </summary>
-    public class Synchronizer
+    /// <remarks>
+    /// Initializes a new instance of the <see cref="Synchronizer"/> class.
+    /// </remarks>
+    /// <param name="config">The configuration.</param>
+    /// <exception cref="System.ArgumentException"><paramref name="config"/> is null</exception>
+    public class Synchronizer(Config config)
     {
         /// <summary>
         /// Gets or sets a value indicating whether destination databases will be modified during a replication run.
@@ -44,18 +49,8 @@ namespace SyncChanges
         public event EventHandler<SyncEventArgs> Synced;
 
         static readonly Logger Log = LogManager.GetCurrentClassLogger();
-        Config Config { get; set; }
+        Config Config { get; set; } = config ?? throw new ArgumentException("config is null", nameof(config));
         bool Error { get; set; }
-
-        /// <summary>
-        /// Initializes a new instance of the <see cref="Synchronizer"/> class.
-        /// </summary>
-        /// <param name="config">The configuration.</param>
-        /// <exception cref="System.ArgumentException"><paramref name="config"/> is null</exception>
-        public Synchronizer(Config config)
-        {
-            Config = config ?? throw new ArgumentException("config is null", nameof(config));
-        }
 
         private IList<IList<TableInfo>> Tables { get; } = new List<IList<TableInfo>>();
         private bool Initialized = false;
@@ -471,9 +466,7 @@ namespace SyncChanges
 
                     while (reader.Read())
                     {
-
-                        if (nullableMap == null)
-                            nullableMap = reader.GetNullableTypeMap();
+                        nullableMap ??= reader.GetNullableTypeMap();
 
                         var col = 0;
                         var change = new Change { Operation = ((string)reader[col])[0], Table = table };
