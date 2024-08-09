@@ -467,8 +467,14 @@ namespace SyncChanges
                     using var reader = cmd.ExecuteReader();
                     var numChanges = 0;
 
+                    object[] nullableMap = null;
+
                     while (reader.Read())
                     {
+
+                        if (nullableMap == null)
+                            nullableMap = reader.GetNullableTypeMap();
+
                         var col = 0;
                         var change = new Change { Operation = ((string)reader[col])[0], Table = table };
                         col++;
@@ -486,9 +492,17 @@ namespace SyncChanges
                         }
 
                         for (int i = 0; i < table.KeyColumns.Count; i++, col++)
-                            change.Keys[table.KeyColumns[i]] = reader.GetValue(col);
+                        {
+                            var val = reader.GetValue(col);
+                            change.Keys[table.KeyColumns[i]] = (val == DBNull.Value ? (nullableMap[col] ?? val) : val);
+                        }
+
                         for (int i = 0; i < table.OtherColumns.Count; i++, col++)
-                            change.Others[table.OtherColumns[i]] = reader.GetValue(col);
+                        {
+                            var val = reader.GetValue(col);
+                            change.Others[table.OtherColumns[i]] = (val == DBNull.Value ? (nullableMap[col] ?? val) : val);
+
+                        }
 
                         changes.Add(change);
                         numChanges++;
