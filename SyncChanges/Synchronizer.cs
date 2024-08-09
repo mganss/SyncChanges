@@ -510,7 +510,7 @@ namespace SyncChanges
 
         private void ComputeForeignKeyConstraintsToDisable(ChangeInfo changeInfo)
         {
-            var changes = changeInfo.Changes.OrderBy(c => c.CreationVersion).ThenBy(c => c.Table.Name).ToList();
+            var changes = changeInfo.Changes.OrderBy(c => c.CreationVersion).ThenBy(c => c.Version).ToList();
 
             for (int i = 0; i < changes.Count; i++)
             {
@@ -535,6 +535,23 @@ namespace SyncChanges
                                 Log.Info($"Foreign key constraint {fk.ForeignKeyName} needs to be disabled for change #{i + 1} from version {change.CreationVersion} until version {intermediateChange.CreationVersion}");
                                 change.ForeignKeyConstraintsToDisable[fk] = intermediateChange.CreationVersion;
                             }
+                        }
+                    }
+                }
+
+                var sameVersionChanges = changes.Where(c => c != change && c.CreationVersion == change.CreationVersion && c.Version == change.Version && c.Operation == 'I').ToList();
+
+                foreach (var sameVersionChange in sameVersionChanges)
+                {
+                    foreach (var fk in change.Table.ForeignKeyConstraints.Where(f => f.ReferencedTableName == sameVersionChange.Table.Name))
+                    {
+                        var val = change.GetValue(fk.ColumnName);
+                        var refVal = sameVersionChange.GetValue(fk.ReferencedColumnName);
+                        if (val != null && val.Equals(refVal))
+                        {
+                            // this foreign key constraint needs to be disabled
+                            Log.Info($"Foreign key constraint {fk.ForeignKeyName} needs to be disabled for change #{i + 1} for version {change.CreationVersion}");
+                            change.ForeignKeyConstraintsToDisable[fk] = sameVersionChange.CreationVersion;
                         }
                     }
                 }
