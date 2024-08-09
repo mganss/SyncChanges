@@ -20,7 +20,7 @@ namespace SyncChanges.Tests
         const string DestinationDatabaseName = "SyncChangesTestDestination";
 
         static string GetConnectionString(string db = "") => ConnectionString + (db.Length > 0 ? $";Initial Catalog={db}" : "");
-        static Database GetDatabase(string db = "") => new(GetConnectionString(db), DatabaseType.SqlServer2012, System.Data.SqlClient.SqlClientFactory.Instance);
+        static Database GetDatabase(string db = "") => new(GetConnectionString(db), DatabaseType.SqlServer2012, Microsoft.Data.SqlClient.SqlClientFactory.Instance);
 
         static void DropDatabase(string name)
         {
@@ -224,7 +224,7 @@ namespace SyncChanges.Tests
                 using (var db = GetDatabase(SourceDatabaseName))
                 {
                     db.Insert(sourceUser);
-                    sourceUser.Name = "Michael Jeffrey Jordan";
+                    sourceUser.Report = null;
                     db.Update(sourceUser);
                 }
 
@@ -612,7 +612,7 @@ namespace SyncChanges.Tests
             {
                 Timeout = 1000
             };
-            Assert.Throws<System.Data.SqlClient.SqlException>(() => synchronizer.Sync());
+            Assert.Throws<Microsoft.Data.SqlClient.SqlException>(() => synchronizer.Sync());
         }
 
         [Test]

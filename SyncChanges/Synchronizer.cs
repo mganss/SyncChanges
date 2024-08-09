@@ -299,7 +299,7 @@ namespace SyncChanges
 
         private Database GetDatabase(string connectionString, DatabaseType databaseType = null)
         {
-            var db = new Database(connectionString, databaseType ?? DatabaseType.SqlServer2005, System.Data.SqlClient.SqlClientFactory.Instance);
+            var db = new Database(connectionString, databaseType ?? DatabaseType.SqlServer2005, Microsoft.Data.SqlClient.SqlClientFactory.Instance);
 
             if (Timeout != 0) db.CommandTimeout = Timeout;
 
