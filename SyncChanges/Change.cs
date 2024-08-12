@@ -9,9 +9,9 @@ namespace SyncChanges
         public long Version { get; set; }
         public long CreationVersion { get; set; }
         public char Operation { get; set; }
-        public Dictionary<string, object> Keys { get; private set; } = new Dictionary<string, object>();
-        public Dictionary<string, object> Others { get; private set; } = new Dictionary<string, object>();
-        public Dictionary<ForeignKeyConstraint, long> ForeignKeyConstraintsToDisable { get; private set; } = new Dictionary<ForeignKeyConstraint, long>();
+        public Dictionary<string, object> Keys { get; private set; } = [];
+        public Dictionary<string, object> Others { get; private set; } = [];
+        public Dictionary<ForeignKeyConstraint, long> ForeignKeyConstraintsToDisable { get; private set; } = [];
 
         public object[] GetValues() => Keys.Values.Concat(Others.Values).ToArray();
 
