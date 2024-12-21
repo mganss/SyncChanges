@@ -16,13 +16,14 @@
     <PackageLicenseUrl>https://github.com/mganss/SyncChanges/blob/master/LICENSE</PackageLicenseUrl>
     <RepositoryType>git</RepositoryType>
     <RepositoryUrl>git://github.com/mganss/SyncChanges</RepositoryUrl>
-	  <RootNamespace>SyncChanges</RootNamespace>
+    <RootNamespace>SyncChanges</RootNamespace>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <DocumentationFile>bin\$(Configuration)\$(TargetFramework)\SyncChanges.xml</DocumentationFile>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
-	<LangVersion>preview</LangVersion>
+    <LangVersion>preview</LangVersion>
+    <NoWarn>$(NoWarn);CA1031</NoWarn>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Humanizer.Core" Version="2.14.1" />

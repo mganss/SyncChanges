@@ -13,9 +13,9 @@ namespace SyncChanges
         public Dictionary<string, object> Others { get; private set; } = [];
         public Dictionary<ForeignKeyConstraint, long> ForeignKeyConstraintsToDisable { get; private set; } = [];
 
-        public object[] GetValues() => Keys.Values.Concat(Others.Values).ToArray();
+        public object[] GetValues() => [.. Keys.Values, .. Others.Values];
 
-        public List<string> GetColumnNames() => Keys.Keys.Concat(Others.Keys).ToList();
+        public List<string> GetColumnNames() => [.. Keys.Keys, .. Others.Keys];
 
         public object GetValue(string columnName)
         {

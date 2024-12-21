@@ -52,38 +52,45 @@ namespace SyncChanges
         Config Config { get; set; } = config ?? throw new ArgumentException("config is null", nameof(config));
         bool Error { get; set; }
 
-        private IList<IList<TableInfo>> Tables { get; } = new List<IList<TableInfo>>();
-        private bool Initialized = false;
+        private IList<IList<TableInfo>> Tables { get; } = [];
+        private readonly bool[] InitializedReplicationSets = new bool[config.ReplicationSets.Count];
 
         /// <summary>
         /// Initialize the synchronization process.
         /// </summary>
         public void Init()
         {
-            if (Timeout != 0)
-                Log.Info($"Command timeout is {"second".ToQuantity(Timeout)}");
-
             for (int i = 0; i < Config.ReplicationSets.Count; i++)
             {
-                var replicationSet = Config.ReplicationSets[i];
-
-                Log.Info($"Getting replication information for replication set {replicationSet.Name}");
-
-                var tables = GetTables(replicationSet.Source);
-                if (replicationSet.Tables != null && replicationSet.Tables.Any())
-                    tables = tables.Select(t => new { Table = t, Name = t.Name.Replace("[", "").Replace("]", "") })
-                        .Where(t => replicationSet.Tables.Exists(r => r == t.Name || r == t.Name.Split('.')[1]))
-                        .Select(t => t.Table).ToList();
-
-                if (!tables.Any())
-                    Log.Warn("No tables to replicate (check if change tracking is enabled)");
-                else
-                    Log.Info($"Replicating {"table".ToQuantity(tables.Count, ShowQuantityAs.None)} {string.Join(", ", tables.Select(t => t.Name))}");
-
-                Tables.Add(tables);
+                Init(i);
             }
+        }
 
-            Initialized = true;
+        private void Init(int index)
+        {
+            if (index < 0 || index >= Config.ReplicationSets.Count)
+                throw new ArgumentOutOfRangeException(nameof(index), "Index is out of range.");
+
+            if (InitializedReplicationSets[index])
+                return;
+
+            var replicationSet = Config.ReplicationSets[index];
+
+            Log.Info($"Getting replication information for replication set {replicationSet.Name}");
+
+            var tables = GetTables(replicationSet.Source);
+            if (replicationSet.Tables != null && replicationSet.Tables.Any())
+                tables = tables.Select(t => new { Table = t, Name = t.Name.Replace("[", "").Replace("]", "") })
+                    .Where(t => replicationSet.Tables.Exists(r => r == t.Name || r == t.Name.Split('.')[1]))
+                    .Select(t => t.Table).ToList();
+
+            if (!tables.Any())
+                Log.Warn("No tables to replicate (check if change tracking is enabled)");
+            else
+                Log.Info($"Replicating {"table".ToQuantity(tables.Count, ShowQuantityAs.None)} {string.Join(", ", tables.Select(t => t.Name))}");
+
+            Tables.Add(tables);
+            InitializedReplicationSets[index] = true;
         }
 
         /// <summary>
@@ -94,7 +101,10 @@ namespace SyncChanges
         {
             Error = false;
 
-            if (!Initialized) Init();
+            if (Timeout != 0)
+                Log.Info($"Command timeout is {"second".ToQuantity(Timeout)}");
+
+            Init();
 
             for (int i = 0; i < Config.ReplicationSets.Count; i++)
             {
@@ -134,7 +144,8 @@ namespace SyncChanges
         {
             var currentVersions = Enumerable.Repeat(0L, Config.ReplicationSets.Count).ToList();
 
-            if (!Initialized) Init();
+            if (Timeout != 0)
+                Log.Info($"Command timeout is {"second".ToQuantity(Timeout)}");
 
             while (true)
             {
@@ -155,6 +166,8 @@ namespace SyncChanges
 
                     try
                     {
+                        Init(i);
+
                         using (var db = GetDatabase(replicationSet.Source.ConnectionString, DatabaseType.SqlServer2008))
                             version = db.ExecuteScalar<long>("select CHANGE_TRACKING_CURRENT_VERSION()");
 
@@ -172,13 +185,11 @@ namespace SyncChanges
                             Synced?.Invoke(this, new SyncEventArgs { ReplicationSet = replicationSet, Version = version });
                         }
                     }
-#pragma warning disable CA1031 // Do not catch general exception types
                     catch (Exception ex)
                     {
                         Log.Error(ex, $"Error occurred during replication of set {replicationSet.Name}.");
                         Error = true;
                     }
-#pragma warning restore CA1031 // Do not catch general exception types
 
                     if (token.IsCancellationRequested)
                     {
@@ -361,21 +372,17 @@ namespace SyncChanges
 
                         Log.Info($"Destination {destination.Name} now at version {changeInfo.Version}");
                     }
-#pragma warning disable CA1031 // Do not catch general exception types
                     catch (Exception ex)
                     {
                         Error = true;
                         Log.Error(ex, $"Error replicating changes to destination {destination.Name}");
                     }
-#pragma warning restore CA1031 // Do not catch general exception types
                 }
-#pragma warning disable CA1031 // Do not catch general exception types
                 catch (Exception ex)
                 {
                     Error = true;
                     Log.Error(ex, $"Error replicating changes to destination {destination.Name}");
                 }
-#pragma warning restore CA1031 // Do not catch general exception types
             }
         }
 
@@ -645,14 +652,12 @@ namespace SyncChanges
 
                 return currentVersion;
             }
-#pragma warning disable CA1031 // Do not catch general exception types
             catch (Exception ex)
             {
                 Log.Error(ex, $"Error getting current version of destination database {dbInfo.Name}. Skipping this destination.");
                 Error = true;
                 return -1;
             }
-#pragma warning restore CA1031 // Do not catch general exception types
         }
     }
 }

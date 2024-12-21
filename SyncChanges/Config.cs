@@ -17,7 +17,7 @@ namespace SyncChanges
         /// <value>
         /// The replication sets.
         /// </value>
-        public List<ReplicationSet> ReplicationSets { get; private set; } = new List<ReplicationSet>();
+        public List<ReplicationSet> ReplicationSets { get; private set; } = [];
     }
 
     /// <summary>
@@ -47,7 +47,7 @@ namespace SyncChanges
         /// <value>
         /// The destination databases.
         /// </value>
-        public List<DatabaseInfo> Destinations { get; private set; } = new List<DatabaseInfo>();
+        public List<DatabaseInfo> Destinations { get; private set; } = [];
 
         /// <summary>
         /// Gets or sets the names of the tables to be replicated. If this is empty, all (non-system) tables will be replicated.
@@ -55,7 +55,7 @@ namespace SyncChanges
         /// <value>
         /// The tables to be replicated.
         /// </value>
-        public List<string> Tables { get; set; } = new List<string>();
+        public List<string> Tables { get; set; } = [];
     }
 
     /// <summary>
