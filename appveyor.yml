@@ -13,13 +13,13 @@ build_script:
   - dotnet --info
   - dotnet restore
   - dotnet build -c Release
-  - dotnet publish SyncChanges.Console -c Release -f net6.0
-  - dotnet publish SyncChanges.Service -c Release -f net461
+  - dotnet publish SyncChanges.Console -c Release -f net8.0
+  - dotnet publish SyncChanges.Service -c Release -f net462
   - dotnet pack --include-symbols --include-source -c Release SyncChanges
   - dotnet pack --include-symbols --include-source -c Release SyncChanges.Console
   - dotnet pack --include-symbols --include-source -c Release SyncChanges.Service
-  - 7z a -mx=9 SyncChanges.Console.%APPVEYOR_BUILD_VERSION%.zip ".\SyncChanges.Console\bin\Release\net6.0\publish\*"
-  - 7z a -mx=9 SyncChanges.Service.%APPVEYOR_BUILD_VERSION%.zip ".\SyncChanges.Service\bin\Release\net461\publish\*"
+  - 7z a -mx=9 SyncChanges.Console.%APPVEYOR_BUILD_VERSION%.zip ".\SyncChanges.Console\bin\Release\net8.0\publish\*"
+  - 7z a -mx=9 SyncChanges.Service.%APPVEYOR_BUILD_VERSION%.zip ".\SyncChanges.Service\bin\Release\net462\publish\*"
 test_script:
   - ps: |
       if (-not $env:APPVEYOR_PULL_REQUEST_NUMBER) {
