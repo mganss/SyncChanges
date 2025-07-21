@@ -219,7 +219,7 @@ namespace SyncChanges.Tests
                 CreateUsersTable(SourceDatabaseName);
                 CreateUsersTable(DestinationDatabaseName);
 
-                var sourceUser = new VarBinaryUser { Num_Trf = 1, Name = "Test", Description = "Test Description", Report = new byte[] { 1, 2, 3, 4 } };
+                var sourceUser = new VarBinaryUser { Num_Trf = 1, Name = "Test", Description = "Test Description", Report = [1, 2, 3, 4] };
 
                 using (var db = GetDatabase(SourceDatabaseName))
                 {
@@ -583,7 +583,7 @@ namespace SyncChanges.Tests
                 Name = "Test",
                 Source = new DatabaseInfo { Name = "Source", ConnectionString = GetConnectionString(SourceDatabaseName) },
                 Destinations = { new DatabaseInfo { Name = "Destination", ConnectionString = GetConnectionString(DestinationDatabaseName) } },
-                Tables = new List<string> { "Test" }
+                Tables = ["Test"]
             };
             var config = new Config { ReplicationSets = { rs } };
 

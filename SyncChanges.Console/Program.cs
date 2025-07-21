@@ -54,7 +54,7 @@ namespace SyncChanges.Console
                     return 1;
                 }
 
-                if (!program.ConfigFiles.Any())
+                if (program.ConfigFiles.Count == 0)
                 {
                     Log.Error("No config files supplied");
                     return 1;

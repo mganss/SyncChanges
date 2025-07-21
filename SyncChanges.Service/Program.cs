@@ -15,10 +15,10 @@ namespace SyncChanges.Service
         static void Main()
         {
             ServiceBase[] ServicesToRun;
-            ServicesToRun = new ServiceBase[]
-            {
+            ServicesToRun =
+            [
                 new SyncChanges()
-            };
+            ];
             ServiceBase.Run(ServicesToRun);
         }
     }
