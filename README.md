@@ -77,6 +77,55 @@ alter table Users
 enable change_tracking
 with (track_columns_updated = off)
 ```
+To enable change tracing for all tables 
+
+```sql
+-- This script enables change tracking on all tables with primary keys.
+declare @pkTables as table (name nvarchar(1000));
+insert into @pkTables (name)
+select distinct tc.TABLE_NAME as name
+from INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+join INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE ccu ON tc.CONSTRAINT_NAME = ccu.Constraint_name
+where tc.CONSTRAINT_TYPE = 'Primary Key'
+
+-- Keep track of how many tables we are dealing with
+declare @enabled int
+declare @alreadyEnabled int
+set @enabled = 0
+set @alreadyEnabled = 0
+select count(*) as tablesWithPrimaryKeys from @pkTables
+
+-- For each table name in primary key tables
+declare @tableName nvarchar(1000)
+while exists (select * from @pkTables)
+begin
+  -- Set the current table name
+  select top 1 @tableName = name from @pkTables order by name asc
+
+  -- Enable change tracking for this table
+  if exists(
+    select sys.schemas.name as schemaName, sys.tables.name as tableName from sys.change_tracking_tables
+    join sys.tables on sys.tables.object_id = sys.change_tracking_tables.object_id
+    join sys.schemas on sys.schemas.schema_id = sys.tables.schema_id
+    where sys.tables.name = @tableName
+  )
+  begin
+    set @alreadyEnabled = @alreadyEnabled + 1
+  end
+  else
+  begin
+    exec('alter table ' + @tableName + ' enable change_tracking')
+    set @enabled = @enabled + 1
+  end
+
+  -- Delete the current table name
+  delete @pkTables where name = @tableName
+
+end
+
+-- enabled + alreadyEnabled must equal tablesWithPrimaryKeys
+select @enabled as tablesEnabled, @alreadyEnabled as tablesAlreadyEnabled
+```
 
 More at MSDN: [Enable and Disable Change Tracking](https://msdn.microsoft.com/en-us/library/bb964713.aspx)
 
