@@ -28,7 +28,7 @@
   <ItemGroup>
     <PackageReference Include="Humanizer.Core" Version="2.14.1" />
     <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
-    <PackageReference Include="NLog" Version="6.0.4" />
+    <PackageReference Include="NLog" Version="6.0.5" />
     <PackageReference Include="NPoco" Version="6.1.0" />
     <PackageReference Include="NPoco.SqlServer" Version="6.1.0" />
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
