@@ -24,14 +24,18 @@ test_script:
   - ps: |
       if (-not $env:APPVEYOR_PULL_REQUEST_NUMBER) {
           dotnet tool install --global dotnet-sonarscanner
-          dotnet sonarscanner begin /k:"mganss_SyncChanges" /v:$env:APPVEYOR_BUILD_VERSION /o:"mganss-github" /d:sonar.host.url="https://sonarcloud.io" /d:sonar.login="$env:sonar_token" /d:sonar.cs.opencover.reportsPaths="$($env:APPVEYOR_BUILD_FOLDER)\coverage.xml" /d:sonar.exclusions="**/*.xsd" /d:sonar.coverage.exclusions="**/Program.cs"
+          dotnet sonarscanner begin /k:"mganss_SyncChanges" /v:$env:APPVEYOR_BUILD_VERSION /o:"mganss-github" /d:sonar.host.url="https://sonarcloud.io" /d:sonar.token="$env:sonar_token" /d:sonar.cs.opencover.reportsPaths="$($env:APPVEYOR_BUILD_FOLDER)\coverage.xml" /d:sonar.exclusions="**/*.xsd" /d:sonar.coverage.exclusions="**/Program.cs"
           dotnet build
       }
   - dotnet test /p:CollectCoverage=true SyncChanges.Tests\SyncChanges.Tests.csproj
   - ps: cp coverage.*.xml ./coverage.xml
   - ps: |
       if (-not $env:APPVEYOR_PULL_REQUEST_NUMBER) {
-          dotnet sonarscanner end /d:sonar.login="$env:sonar_token"
+          $output = dotnet sonarscanner end /d:sonar.token="$env:sonar_token" 2>&1
+          $output | Where-Object { $_ -notmatch "Failed to delete temp folder" } | Write-Host
+          if ($LASTEXITCODE -ne 0 -and ($output | Select-String "Failed to delete temp folder")) {
+              $LASTEXITCODE = 0
+          }
       }
   - pip install codecov
   - codecov -f "coverage.xml"
