@@ -572,7 +572,7 @@ namespace SyncChanges.Tests
         [Test]
         public void NullConfigTest()
         {
-            Assert.Throws<ArgumentException>(() => new Synchronizer(null));
+            Assert.Throws<ArgumentException>(new Action(() => new Synchronizer(null)));
         }
 
         [Test]
@@ -612,7 +612,7 @@ namespace SyncChanges.Tests
             {
                 Timeout = 1000
             };
-            Assert.Throws<Microsoft.Data.SqlClient.SqlException>(() => synchronizer.Sync());
+            Assert.Throws<Microsoft.Data.SqlClient.SqlException>(new Action(() => synchronizer.Sync()));
         }
 
         [Test]

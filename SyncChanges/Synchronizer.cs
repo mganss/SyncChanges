@@ -80,9 +80,9 @@ namespace SyncChanges
 
             var tables = GetTables(replicationSet.Source);
             if (replicationSet.Tables != null && replicationSet.Tables.Any())
-                tables = tables.Select(t => new { Table = t, Name = t.Name.Replace("[", "").Replace("]", "") })
+                tables = [.. tables.Select(t => new { Table = t, Name = t.Name.Replace("[", "").Replace("]", "") })
                     .Where(t => replicationSet.Tables.Exists(r => r == t.Name || r == t.Name.Split('.')[1]))
-                    .Select(t => t.Table).ToList();
+                    .Select(t => t.Table)];
 
             if (!tables.Any())
                 Log.Warn("No tables to replicate (check if change tracking is enabled)");
@@ -230,8 +230,8 @@ namespace SyncChanges
                     .Select(g => new TableInfo
                     {
                         Name = (string)g.Key,
-                        KeyColumns = g.Where(c => (int)c.PrimaryKey > 0).Select(c => (string)c.ColumnName).ToList(),
-                        OtherColumns = g.Where(c => (int)c.PrimaryKey == 0).Select(c => (string)c.ColumnName).ToList(),
+                        KeyColumns = [.. g.Where(c => (int)c.PrimaryKey > 0).Select(c => (string)c.ColumnName)],
+                        OtherColumns = [.. g.Where(c => (int)c.PrimaryKey == 0).Select(c => (string)c.ColumnName)],
                         HasIdentity = g.Any(c => (int)c.IsIdentity > 0)
                     }).ToList();
 
@@ -258,7 +258,7 @@ namespace SyncChanges
                         where obj.is_disabled = 0");
 
                 foreach (var table in tables)
-                    table.ForeignKeyConstraints = fks.Where(f => f.TableName == table.Name).ToList();
+                    table.ForeignKeyConstraints = [.. fks.Where(f => f.TableName == table.Name)];
 
                 var uqcs = db.Fetch<UniqueColumn>(@"SELECT
                              IndexId = ('[' + sch.name + '].[' + t.name + '].[' + ind.name + ']'),
@@ -288,11 +288,11 @@ namespace SyncChanges
                     IndexName = g.First().IndexName,
                     TableName = g.First().TableName,
                     IsConstraint = g.First().IsConstraint,
-                    ColumnNames = g.Select(c => c.ColumnName).ToList(),
+                    ColumnNames = [.. g.Select(c => c.ColumnName)],
                 }).ToList();
 
                 foreach (var table in tables)
-                    table.UniqueConstraints = uqs.Where(u => u.TableName == table.Name).ToList();
+                    table.UniqueConstraints = [.. uqs.Where(u => u.TableName == table.Name)];
 
                 return tables;
             }
