@@ -30,7 +30,7 @@
     <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
     <PackageReference Include="NLog" Version="6.2.2" />
     <PackageReference Include="NPoco" Version="6.4.0" />
-    <PackageReference Include="NPoco.SqlServer" Version="6.4.0" />
+    <PackageReference Include="NPoco.SqlServer" Version="6.4.1" />
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.403" PrivateAssets="All" />
   </ItemGroup>
 </Project>
