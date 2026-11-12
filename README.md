@@ -2,8 +2,9 @@ SyncChanges
 ===========
 
 [![NuGet version](https://badge.fury.io/nu/SyncChanges.svg)](http://badge.fury.io/nu/SyncChanges)
-[![Build status](https://ci.appveyor.com/api/projects/status/pn3y41ltb8tcq4kk?svg=true)](https://ci.appveyor.com/project/mganss/syncchanges/branch/master)
-[![codecov.io](https://codecov.io/github/mganss/SyncChanges/coverage.svg?branch=master)](https://codecov.io/github/mganss/SyncChanges?branch=master)
+[![Build status](https://github.com/mganss/SyncChanges/actions/workflows/build.yml/badge.svg?branch=master)](https://github.com/mganss/SyncChanges/actions/workflows/build.yml)
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=mganss_SyncChanges&metric=coverage)](https://sonarcloud.io/dashboard?id=mganss_SyncChanges)
+[![Sonarcloud Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=mganss_SyncChanges&metric=alert_status)](https://sonarcloud.io/dashboard?id=mganss_SyncChanges)
 
 A Windows service, console application, and library to synchronize/replicate database changes based on SQL Server [Change Tracking](https://msdn.microsoft.com/en-us/library/bb933875.aspx).
 

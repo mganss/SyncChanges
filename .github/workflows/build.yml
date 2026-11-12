@@ -1,0 +1,131 @@
+name: Build
+
+on:
+  push:
+    branches: [ '**' ]
+  pull_request:
+
+env:
+  CI_BUILD_VERSION: 3.1.${{ github.run_number }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Configure line endings
+        run: git config --global core.autocrlf true
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Setup Java (for SonarScanner)
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Pack
+        run: |
+          dotnet pack --include-symbols --include-source -c Release SyncChanges -o packages
+          dotnet pack --include-symbols --include-source -c Release SyncChanges.Console -o packages
+          dotnet pack --include-symbols --include-source -c Release SyncChanges.Service -o packages
+
+      - name: Publish executables
+        run: |
+          dotnet publish SyncChanges.Console -c Release -o publish/console
+          dotnet publish SyncChanges.Service -c Release -o publish/service
+          (cd publish/console && 7z a -mx=9 "../../packages/SyncChanges.Console.${CI_BUILD_VERSION}.zip" .)
+          (cd publish/service && 7z a -mx=9 "../../packages/SyncChanges.Service.${CI_BUILD_VERSION}.zip" .)
+
+      - name: Start SQL Server LocalDB
+        run: sqllocaldb start MSSQLLocalDB
+
+      - name: Install SonarScanner
+        if: github.event_name != 'pull_request' && github.actor != 'dependabot[bot]'
+        run: dotnet tool install --global dotnet-sonarscanner
+
+      - name: SonarScanner begin
+        if: github.event_name != 'pull_request' && github.actor != 'dependabot[bot]'
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: >
+          dotnet sonarscanner begin
+          /k:"mganss_SyncChanges"
+          /v:"${{ env.CI_BUILD_VERSION }}"
+          /o:"mganss-github"
+          /d:sonar.host.url="https://sonarcloud.io"
+          /d:sonar.token="$SONAR_TOKEN"
+          /d:sonar.cs.opencover.reportsPaths="${{ github.workspace }}/coverage.xml"
+          /d:sonar.exclusions="**/*.xsd"
+          /d:sonar.coverage.exclusions="**/Program.cs"
+
+      - name: Build
+        if: github.event_name != 'pull_request' && github.actor != 'dependabot[bot]'
+        run: dotnet build
+
+      - name: Test
+        run: dotnet test /p:CollectCoverage=true SyncChanges.Tests/SyncChanges.Tests.csproj
+
+      - name: SonarScanner end
+        if: github.event_name != 'pull_request' && github.actor != 'dependabot[bot]'
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packages
+          path: |
+            packages/*.*nupkg
+            packages/*.zip
+
+  release:
+    needs: build
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: packages
+          path: packages
+
+      - name: Create release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ env.CI_BUILD_VERSION }}
+          name: ${{ env.CI_BUILD_VERSION }}
+          body: ${{ github.event.head_commit.message }}
+          draft: true
+          files: packages/*
