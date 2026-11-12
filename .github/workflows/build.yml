@@ -14,6 +14,9 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      # keep Git Bash from rewriting /p: and /k: arguments as paths
+      MSYS_NO_PATHCONV: '1'
     defaults:
       run:
         shell: bash
