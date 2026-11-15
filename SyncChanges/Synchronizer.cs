@@ -65,6 +65,7 @@ namespace SyncChanges
         static readonly Logger Log = LogManager.GetCurrentClassLogger();
         Config Config { get; set; } = config ?? throw new ArgumentException("config is null", nameof(config));
         bool Error { get; set; }
+        CancellationToken Token { get; set; }
 
         private IList<IList<TableInfo>> Tables { get; } = [];
         private readonly bool[] InitializedReplicationSets = new bool[config.ReplicationSets.Count];
@@ -111,10 +112,37 @@ namespace SyncChanges
         /// Perform the synchronization.
         /// </summary>
         /// <returns>true, if the synchronization was successful; otherwise, false.</returns>
-        public bool Sync()
+        public bool Sync() => Sync(CancellationToken.None);
+
+        /// <summary>
+        /// Perform the synchronization.
+        /// </summary>
+        /// <param name="token">The cancellation token. Cancelling it cancels the running database command, and rolls back
+        /// the changes of the destination being replicated to.</param>
+        /// <returns>true, if the synchronization was successful; otherwise, false.</returns>
+        /// <exception cref="OperationCanceledException">The synchronization was cancelled.</exception>
+        public bool Sync(CancellationToken token)
         {
             Error = false;
+            Token = token;
 
+            try
+            {
+                SyncAll();
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException && token.IsCancellationRequested)
+            {
+                // a cancelled command fails with the error of the database client
+                throw new OperationCanceledException("Replication was cancelled.", ex, token);
+            }
+
+            Log.Info($"Finished replication {(Error ? "with" : "without")} errors");
+
+            return !Error;
+        }
+
+        private void SyncAll()
+        {
             LogSettings();
 
             Init();
@@ -126,17 +154,15 @@ namespace SyncChanges
 
                 Sync(replicationSet, tables);
             }
-
-            Log.Info($"Finished replication {(Error ? "with" : "without")} errors");
-
-            return !Error;
         }
 
         private bool Sync(ReplicationSet replicationSet, IList<TableInfo> tables, long sourceVersion = -1)
         {
-            Error = false;
-
             if (!tables.Any()) return true;
+
+            // The result is for this replication set only, but the errors of earlier replication sets are kept.
+            var previousError = Error;
+            Error = false;
 
             Log.Info($"Starting replication for replication set {replicationSet.Name}");
 
@@ -146,7 +172,10 @@ namespace SyncChanges
             foreach (var destinations in destinationsByVersion)
                 Replicate(replicationSet.Source, destinations, tables);
 
-            return !Error;
+            var success = !Error;
+            Error |= previousError;
+
+            return success;
         }
 
         /// <summary>
@@ -156,6 +185,7 @@ namespace SyncChanges
         public void SyncLoop(CancellationToken token)
         {
             var currentVersions = Enumerable.Repeat(0L, Config.ReplicationSets.Count).ToList();
+            Token = token;
 
             LogSettings();
 
@@ -197,6 +227,12 @@ namespace SyncChanges
                             Synced?.Invoke(this, new SyncEventArgs { ReplicationSet = replicationSet, Version = version });
                         }
                     }
+                    catch (Exception) when (token.IsCancellationRequested)
+                    {
+                        // a cancelled command fails with the error of the database client, the changes to the
+                        // destination are rolled back
+                        Log.Info($"Cancelled replication of set {replicationSet.Name}.");
+                    }
                     catch (Exception ex)
                     {
                         Log.Error(ex, $"Error occurred during replication of set {replicationSet.Name}.");
@@ -213,7 +249,7 @@ namespace SyncChanges
                 Log.Info($"Finished replication {(Error ? "with" : "without")} errors");
 
                 var delay = (int)Math.Round(Math.Max(0, (TimeSpan.FromSeconds(Interval) - (DateTime.UtcNow - start)).TotalSeconds) * 1000, MidpointRounding.AwayFromZero);
-                Thread.Sleep(delay);
+                token.WaitHandle.WaitOne(delay);
             }
         }
 
@@ -334,16 +370,16 @@ namespace SyncChanges
 
                 return tables;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!Token.IsCancellationRequested)
             {
                 Log.Fatal(ex, "Error getting tables to replicate from source database");
                 throw;
             }
         }
 
-        private Database GetDatabase(string connectionString, DatabaseType databaseType = null)
+        private CancellableDatabase GetDatabase(string connectionString, DatabaseType databaseType = null)
         {
-            var db = new Database(connectionString, databaseType ?? DatabaseType.SqlServer2005, Microsoft.Data.SqlClient.SqlClientFactory.Instance);
+            var db = new CancellableDatabase(connectionString, databaseType ?? DatabaseType.SqlServer2005, Microsoft.Data.SqlClient.SqlClientFactory.Instance, Token);
 
             if (Timeout != 0) db.CommandTimeout = Timeout;
 
@@ -358,6 +394,8 @@ namespace SyncChanges
             // replicate changes to destinations
             foreach (var destination in destinations)
             {
+                Token.ThrowIfCancellationRequested();
+
                 try
                 {
                     Log.Info($"Replicating {"change".ToQuantity(changeInfo.Changes.Count)} to destination {destination.Name}");
@@ -409,13 +447,13 @@ namespace SyncChanges
 
                         Log.Info($"Destination {destination.Name} now at version {changeInfo.Version} (took {progress.Elapsed.Humanize(2)})");
                     }
-                    catch (Exception ex)
+                    catch (Exception ex) when (!Token.IsCancellationRequested)
                     {
                         Error = true;
                         Log.Error(ex, $"Error replicating changes to destination {destination.Name}");
                     }
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (!Token.IsCancellationRequested)
                 {
                     Error = true;
                     Log.Error(ex, $"Error replicating changes to destination {destination.Name}");
@@ -475,6 +513,8 @@ namespace SyncChanges
 
                 foreach (var table in tables)
                 {
+                    Token.ThrowIfCancellationRequested();
+
                     var tableName = table.Name;
                     var minVersion = db.ExecuteScalar<long?>("select CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(@0))", tableName);
 
@@ -499,6 +539,8 @@ namespace SyncChanges
                     db.OpenSharedConnection();
                     var cmd = db.CreateCommand(db.Connection, System.Data.CommandType.Text, sql, destinationVersion);
 
+                    // the registration also cancels the command while its results are read
+                    using var registration = db.CancelOnToken(cmd.Cancel);
                     using var reader = cmd.ExecuteReader();
                     var numChanges = 0;
 
@@ -794,7 +836,7 @@ namespace SyncChanges
 
                 return currentVersion;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!Token.IsCancellationRequested)
             {
                 Log.Error(ex, $"Error getting current version of destination database {dbInfo.Name}. Skipping this destination.");
                 Error = true;

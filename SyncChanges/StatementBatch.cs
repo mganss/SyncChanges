@@ -29,7 +29,7 @@ namespace SyncChanges
     /// is several times slower when a round trip takes long.
     /// </para>
     /// </remarks>
-    internal sealed class StatementBatch(Database db, int batchSize, bool dryRun)
+    internal sealed class StatementBatch(CancellableDatabase db, int batchSize, bool dryRun)
     {
         static readonly Logger Log = LogManager.GetLogger(typeof(Synchronizer).FullName);
 
@@ -121,6 +121,8 @@ namespace SyncChanges
         {
             if (Statements == 0) return;
 
+            db.Token.ThrowIfCancellationRequested();
+
             try
             {
                 if (!dryRun)
@@ -131,13 +133,14 @@ namespace SyncChanges
                         batch.Timeout = db.CommandTimeout;
                     foreach (var command in Commands)
                         batch.BatchCommands.Add(command);
-                    batch.ExecuteNonQuery();
+                    using (db.CancelOnToken(batch.Cancel))
+                        batch.ExecuteNonQuery();
 #else
                     db.Execute(Sql.ToString(), [.. Args]);
 #endif
                 }
             }
-            catch
+            catch when (!db.Token.IsCancellationRequested)
             {
                 var changes = FirstChange == LastChange ? $"change #{FirstChange}" : $"changes #{FirstChange} to #{LastChange}";
                 Log.Error($"Error executing {"statement".ToQuantity(Statements)} for {changes}");

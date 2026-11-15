@@ -1131,6 +1131,94 @@ namespace SyncChanges.Tests
         }
 
         [Test]
+        public void LoopCancelDuringIntervalTest()
+        {
+            try
+            {
+                CreateUsersTable();
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                    db.Insert(new User { Name = "Michael Jordan", Age = 54, DateOfBirth = new DateTime(1963, 2, 17), Savings = 1.31m * 1e9m });
+
+                var synchronizer = new Synchronizer(TestConfig) { Interval = 600 };
+                var synced = new ManualResetEventSlim(false);
+                synchronizer.Synced += (s, e) => synced.Set();
+                using var src = new CancellationTokenSource();
+                var t = Task.Factory.StartNew(() => synchronizer.SyncLoop(src.Token), TaskCreationOptions.LongRunning);
+
+                Assert.That(synced.Wait(TimeSpan.FromSeconds(60)), Is.True);
+
+                src.Cancel();
+
+                Assert.That(t.Wait(TimeSpan.FromSeconds(10)), Is.True, "loop did not stop while waiting for the next interval");
+            }
+            finally
+            {
+                DropTable("Users");
+            }
+        }
+
+        [Test]
+        public void CancelRunningCommandTest()
+        {
+            try
+            {
+                CreateUsersTable();
+
+                var sourceUser = new User { Name = "Michael Jordan", Age = 54, DateOfBirth = new DateTime(1963, 2, 17), Savings = 1.31m * 1e9m };
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                    db.Insert(sourceUser);
+
+                using var src = new CancellationTokenSource();
+                Task<bool> t;
+
+                // a transaction holding an exclusive lock on the destination table blocks the replication's insert
+                using (var blocker = GetDatabase(DestinationDatabaseName))
+                {
+                    blocker.BeginTransaction();
+                    blocker.Execute("select count(*) from Users with (tablockx, holdlock)");
+
+                    var synchronizer = new Synchronizer(TestConfig) { Timeout = 600 };
+                    t = Task.Factory.StartNew(() => synchronizer.Sync(src.Token), TaskCreationOptions.LongRunning);
+
+                    // wait until the replication is blocked on the lock
+                    var deadline = DateTime.UtcNow.AddSeconds(60);
+                    using (var monitor = GetDatabase(DestinationDatabaseName))
+                    {
+                        while (monitor.ExecuteScalar<int>("select count(*) from sys.dm_exec_requests where blocking_session_id <> 0 and database_id = DB_ID()") == 0)
+                        {
+                            Assert.That(DateTime.UtcNow, Is.LessThan(deadline), "replication did not block on the lock");
+                            Assert.That(t.IsCompleted, Is.False, "replication finished without blocking");
+                            Thread.Sleep(100);
+                        }
+                    }
+
+                    src.Cancel();
+
+                    var ex = Assert.Throws<AggregateException>(() => t.Wait(TimeSpan.FromSeconds(10)));
+                    Assert.That(ex.InnerException, Is.InstanceOf<OperationCanceledException>());
+
+                    blocker.AbortTransaction();
+                }
+
+                // the cancelled replication was rolled back
+                using (var db = GetDatabase(DestinationDatabaseName))
+                    Assert.That(db.Fetch<User>("select * from Users"), Is.Empty);
+
+                // and a new replication starts from the same version
+                Assert.That(new Synchronizer(TestConfig).Sync(), Is.True);
+
+                using (var db = GetDatabase(DestinationDatabaseName))
+                    Assert.That(db.Fetch<User>("select * from Users"), Is.EquivalentTo(new[] { sourceUser }));
+            }
+            finally
+            {
+                DropTable("Users");
+            }
+        }
+
+        [Test]
         public void TransactionTest()
         {
             try
