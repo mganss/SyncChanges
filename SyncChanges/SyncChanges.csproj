@@ -9,7 +9,7 @@
     <FileVersion>$(CI_Build_Version).0</FileVersion>
     <PackageVersion>$(CI_Build_Version)</PackageVersion>
     <Authors>Michael Ganss</Authors>
-    <TargetFrameworks>netstandard2.0</TargetFrameworks>
+    <TargetFrameworks>netstandard2.0;net10.0</TargetFrameworks>
     <AssemblyName>SyncChanges</AssemblyName>
     <PackageId>SyncChanges</PackageId>
     <PackageTags>replication synchronization sqlserver sql-server mirroring database</PackageTags>

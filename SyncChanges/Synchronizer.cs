@@ -45,8 +45,8 @@ namespace SyncChanges
         public int Interval { get; set; } = 30;
 
         /// <summary>
-        /// Gets or sets the maximum number of statements sent to a destination database in one command. Default is 100.
-        /// Values less than 2 send each statement in its own command.
+        /// Gets or sets the maximum number of statements sent to a destination database in one round trip. Default is 100.
+        /// Values less than 2 send each statement in its own round trip.
         /// </summary>
         /// <value>
         /// The maximum number of statements per command.
@@ -427,120 +427,6 @@ namespace SyncChanges
             batch.Add($"alter table {fk.TableName} nocheck constraint [{fk.ForeignKeyName}]");
         }
 
-        /// <summary>
-        /// Collects statements and sends them to the database in as few commands as possible,
-        /// keeping their order. A command holds at most <c>batchSize</c> statements and
-        /// at most <see cref="MaxParameters"/> parameters (SQL Server allows 2100).
-        /// </summary>
-        /// <remarks>
-        /// A command's text differs from command to command, so SQL Server would compile its statements every time,
-        /// which takes longer than executing them. Each statement with parameters is therefore run through
-        /// <c>sp_executesql</c>, whose text and parameter declarations are the same for all changes of one kind to one
-        /// table, so its plan is compiled once and then reused. The command itself only holds the <c>exec</c> calls,
-        /// which take next to no time to compile. The statements' text and declarations are passed as parameters, so
-        /// they are not parsed for parameters again on the way, and are sent once per command.
-        /// </remarks>
-        private sealed class StatementBatch(Database db, int batchSize, bool dryRun)
-        {
-            const int MaxParameters = 2000;
-
-            private readonly StringBuilder Sql = new();
-            private readonly List<object> Args = [];
-            private readonly Dictionary<string, int> TextParameters = []; // by statement text or declaration: the parameter holding it
-            private int Statements;
-            private int FirstChange;
-            private int LastChange;
-
-            /// <summary>
-            /// Gets or sets the number (1-based) of the change whose statements are being added. Used for error messages.
-            /// </summary>
-            public int CurrentChange { get; set; }
-
-            /// <summary>
-            /// Adds a statement without parameters to the batch, sending the batch first if the statement would not fit.
-            /// </summary>
-            public void Add(string sql)
-            {
-                Reserve(0);
-                Sql.Append(sql).AppendLine(";");
-            }
-
-            /// <summary>
-            /// Adds a statement to the batch, sending the batch first if the statement would not fit.
-            /// </summary>
-            /// <param name="sql">The statement's SQL, with parameters @0 to @n.</param>
-            /// <param name="parameters">The declarations of the parameters, e.g. <c>@0 int, @1 nvarchar(200)</c>.</param>
-            /// <param name="args">The statement's parameter values.</param>
-            public void Add(string sql, string parameters, object[] args)
-            {
-                var newTexts = (TextParameters.ContainsKey(sql) ? 0 : 1) + (TextParameters.ContainsKey(parameters) ? 0 : 1);
-                Reserve(args.Length + newTexts);
-
-                var sqlParameter = TextParameter(sql);
-                var parametersParameter = TextParameter(parameters);
-
-                Sql.Append($"exec sp_executesql @{sqlParameter}, @{parametersParameter}");
-                foreach (var arg in args)
-                {
-                    Sql.Append($", @{Args.Count}");
-                    Args.Add(arg);
-                }
-                Sql.AppendLine(";");
-            }
-
-            private int TextParameter(string text)
-            {
-                if (!TextParameters.TryGetValue(text, out var parameter))
-                {
-                    parameter = Args.Count;
-                    TextParameters[text] = parameter;
-                    Args.Add(text);
-                }
-
-                return parameter;
-            }
-
-            // Makes room for a statement with the given number of new parameters, sending the batch first if needed.
-            private void Reserve(int parameters)
-            {
-                if (Statements > 0 && (Statements >= batchSize || Args.Count + parameters > MaxParameters))
-                    Flush();
-
-                if (Statements == 0)
-                    FirstChange = CurrentChange;
-
-                Statements++;
-                LastChange = CurrentChange;
-            }
-
-            /// <summary>
-            /// Sends the statements collected so far.
-            /// </summary>
-            public void Flush()
-            {
-                if (Statements == 0) return;
-
-                try
-                {
-                    if (!dryRun)
-                        db.Execute(Sql.ToString(), [.. Args]);
-                }
-                catch
-                {
-                    var changes = FirstChange == LastChange ? $"change #{FirstChange}" : $"changes #{FirstChange} to #{LastChange}";
-                    Log.Error($"Error executing {"statement".ToQuantity(Statements)} for {changes}");
-                    throw;
-                }
-                finally
-                {
-                    Sql.Clear();
-                    Args.Clear();
-                    TextParameters.Clear();
-                    Statements = 0;
-                }
-            }
-        }
-
         private void SetSyncVersion(Database db, long currentVersion)
         {
             if (!DryRun)
@@ -838,7 +724,7 @@ namespace SyncChanges
                         insertSql = $"set IDENTITY_INSERT {tableName} ON; {insertSql}; set IDENTITY_INSERT {tableName} OFF";
                     if (Log.IsDebugEnabled)
                         Log.Debug($"Executing insert: {insertSql} ({FormatArgs(insertValues)})");
-                    batch.Add(insertSql, ParameterDeclarations(table, insertColumnNames), TypeValues(table, insertColumnNames, insertValues));
+                    batch.Add(insertSql, ColumnTypes(table, insertColumnNames), insertValues);
                     break;
 
                 // Update
@@ -850,8 +736,7 @@ namespace SyncChanges
                         PrimaryKeys(change));
                     if (Log.IsDebugEnabled)
                         Log.Debug($"Executing update: {updateSql} ({FormatArgs(updateValues)})");
-                    var updateParameterColumns = change.GetColumnNames();
-                    batch.Add(updateSql, ParameterDeclarations(table, updateParameterColumns), TypeValues(table, updateParameterColumns, updateValues));
+                    batch.Add(updateSql, ColumnTypes(table, change.GetColumnNames()), updateValues);
                     break;
 
                 // Delete
@@ -860,7 +745,7 @@ namespace SyncChanges
                     var deleteSql = string.Format("delete from {0} where {1}", tableName, PrimaryKeys(change));
                     if (Log.IsDebugEnabled)
                         Log.Debug($"Executing delete: {deleteSql} ({FormatArgs(deleteValues)})");
-                    batch.Add(deleteSql, ParameterDeclarations(table, [.. change.Keys.Keys]), deleteValues);
+                    batch.Add(deleteSql, ColumnTypes(table, change.Keys.Keys), deleteValues);
                     break;
             }
         }
@@ -870,26 +755,8 @@ namespace SyncChanges
         private static string PrimaryKeys(Change change) =>
             string.Join(" and ", change.Keys.Keys.Select((c, i) => $"{c} = @{i}"));
 
-        private static string ParameterDeclarations(TableInfo table, IList<string> columnNames) =>
-            string.Join(", ", columnNames.Select((c, i) => $"@{i} {table.ColumnTypes[c]}"));
-
-        // Gives values a SQL type where the one derived from their .NET type does not fit the column: a null without
-        // a type is sent as nvarchar, which SQL Server does not convert to binary types, and a DateTime is sent as
-        // datetime, which would cut off the precision of a datetime2 column.
-        private static object[] TypeValues(TableInfo table, IList<string> columnNames, object[] values)
-        {
-            for (int i = 0; i < values.Length; i++)
-            {
-                var type = table.ColumnTypes[columnNames[i]];
-
-                if (values[i] == DBNull.Value && (type.StartsWith("binary") || type.StartsWith("varbinary")))
-                    values[i] = System.Data.SqlTypes.SqlBinary.Null;
-                else if (type.StartsWith("datetime2"))
-                    values[i] = new Microsoft.Data.SqlClient.SqlParameter { SqlDbType = System.Data.SqlDbType.DateTime2, Value = values[i] };
-            }
-
-            return values;
-        }
+        private static List<string> ColumnTypes(TableInfo table, IEnumerable<string> columnNames) =>
+            [.. columnNames.Select(c => table.ColumnTypes[c])];
 
         private long GetCurrentVersion(DatabaseInfo dbInfo)
         {

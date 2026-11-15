@@ -34,7 +34,7 @@ Options:
   -i, --interval=VALUE       Replication interval in seconds (default is 30);
                                only relevant in loop mode
   -b, --batchsize=VALUE      Maximum number of statements sent to a destination
-                               database in one command (default is 100)
+                               database in one round trip (default is 100)
 ```
 
 A configuration file looks like this:
@@ -119,28 +119,29 @@ Service
 
 In addition to the command line you can also run SyncChanges as a Windows service. The service periodically polls the value of [`CHANGE_TRACKING_CURRENT_VERSION`](https://docs.microsoft.com/en-us/sql/relational-databases/system-functions/change-tracking-current-version-transact-sql) in a configurable interval and starts replication if the version of the source has increased.
 
-The service expects a `config.json` configuration file in the same folder as the service executable. The desired polling interval, command timeout and batch size can be configured in the `SyncChanges.Service.exe.config` file.
+The service runs on .NET 10 and needs its runtime installed. It expects a `config.json` configuration file in the same folder as the service executable. The desired polling interval, command timeout and batch size can be configured in the `SyncChanges.Service.dll.config` file.
 
-To install the service, use the [InstallUtil.exe](https://msdn.microsoft.com/en-us/library/50614e95%28v=vs.110%29.aspx) tool that comes with the .NET Framework installation:
+To install the service, use `sc.exe` from an elevated command prompt, with the full path of the executable:
 
 ```
-C:\Windows\Microsoft.NET\Framework64\v4.0.30319\InstallUtil.exe .\SyncChanges.Service.exe
+sc.exe create SyncChangesService binPath= "C:\SyncChanges.Service\SyncChanges.Service.exe" start= auto obj= ".\UserName" password= "..."
 ```
 
-During installation, you have to enter credentials for the user account the service will use. This has to be a fully qualified name, e.g. if it's a local account enter `.\UserName`. The user has to have the necessary database permissions to carry out the replication process.
+`obj` is the user account the service will use; leave out `obj` and `password` to run it as LocalSystem. A local account has to be entered as `.\UserName`. The user has to have the necessary database permissions to carry out the replication process.
 
 To start the service:
 
 ```
-net start SyncChangesService
+sc.exe start SyncChangesService
 ```
+
+Services installed with `InstallUtil.exe` by versions for the .NET Framework can be kept: stop the service, replace its files with the new ones, and start it again.
 
 Possible Improvements
 ----------------------------
 
 - Use some change notification mechanism to trigger replication
 - Use column change tracking
-- Apply large amount of changes in batches (of configurable size)
 - Parallelize replication to destinations
 
 Feel free to grab one of these and make a PR.

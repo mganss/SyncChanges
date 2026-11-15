@@ -39,7 +39,7 @@ namespace SyncChanges.Console
                         { "t|timeout=", "Database command timeout in seconds", (int v) => program.Timeout = v },
                         { "l|loop", "Perform replication in a loop, periodically checking for changes", v => program.Loop = v != null },
                         { "i|interval=", "Replication interval in seconds (default is 30); only relevant in loop mode", (int v) => program.Interval = v },
-                        { "b|batchsize=", "Maximum number of statements sent to a destination database in one command (default is 100)", (int v) => program.BatchSize = v },
+                        { "b|batchsize=", "Maximum number of statements sent to a destination database in one round trip (default is 100)", (int v) => program.BatchSize = v },
                     };
 
                     program.ConfigFiles = options.Parse(args);

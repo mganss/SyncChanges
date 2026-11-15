@@ -363,7 +363,7 @@ namespace SyncChanges.Tests
         [TestCase(1)]
         [TestCase(7)]
         [TestCase(100)]
-        [TestCase(1000)] // more parameters than fit in one command
+        [TestCase(1000)] // more parameters than fit in one command of exec sp_executesql calls
         public void BatchTest(int batchSize)
         {
             try
