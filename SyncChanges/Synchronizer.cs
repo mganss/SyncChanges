@@ -346,7 +346,7 @@ namespace SyncChanges
                     try
                     {
                         var changes = changeInfo.Changes;
-                        var disabledForeignKeyConstraints = new Dictionary<ForeignKeyConstraint, long>();
+                        var disabledForeignKeyConstraints = new List<ForeignKeyConstraint>();
                         var batch = new StatementBatch(db, BatchSize, DryRun);
 
                         for (int i = 0; i < changes.Count; i++)
@@ -358,30 +358,20 @@ namespace SyncChanges
 
                             foreach (var fk in change.ForeignKeyConstraintsToDisable)
                             {
-                                if (disabledForeignKeyConstraints.TryGetValue(fk.Key, out long untilVersion))
+                                if (!disabledForeignKeyConstraints.Contains(fk))
                                 {
-                                    // FK is already disabled, check if it needs to be deferred further than currently planned
-                                    if (fk.Value > untilVersion)
-                                        disabledForeignKeyConstraints[fk.Key] = fk.Value;
-                                }
-                                else
-                                {
-                                    DisableForeignKeyConstraint(batch, fk.Key);
-                                    disabledForeignKeyConstraints[fk.Key] = fk.Value;
+                                    DisableForeignKeyConstraint(batch, fk);
+                                    disabledForeignKeyConstraints.Add(fk);
                                 }
                             }
 
                             PerformChange(batch, change);
-
-                            if ((i + 1) >= changes.Count || changes[i + 1].CreationVersion > change.CreationVersion) // there may be more than one change with the same CreationVersion
-                            {
-                                foreach (var fk in disabledForeignKeyConstraints.Where(f => f.Value <= change.CreationVersion).Select(f => f.Key).ToList())
-                                {
-                                    ReenableForeignKeyConstraint(batch, fk);
-                                    disabledForeignKeyConstraints.Remove(fk);
-                                }
-                            }
                         }
+
+                        // Re-enabling checks the whole table, so it is done once, when all changes are in. The constraints
+                        // were disabled in this transaction, so they are only ever off for its own statements.
+                        foreach (var fk in disabledForeignKeyConstraints)
+                            ReenableForeignKeyConstraint(batch, fk);
 
                         batch.Flush();
 
@@ -605,14 +595,22 @@ namespace SyncChanges
             return changeInfo;
         }
 
+        /// <summary>
+        /// Finds the changes that are replicated before the insert of a row their foreign key points to.
+        /// Changes are replicated in the order of the version of their last change, and an insert takes
+        /// the version of the row's last update, so a referenced row inserted early but updated later is
+        /// inserted after the rows that reference it. Its foreign key constraint is disabled from the
+        /// first such change on.
+        /// </summary>
         private void ComputeForeignKeyConstraintsToDisable(ChangeInfo changeInfo)
         {
-            var changes = changeInfo.Changes.OrderBy(c => c.CreationVersion).ThenBy(c => c.Version).ToList();
+            var changes = changeInfo.Changes; // in the order they are replicated
 
             // For each referenced column of a foreign key: the positions in changes of inserts into the referenced table,
             // by the value of the referenced column, in ascending order. Looking up the inserts that a change's foreign key
             // value points to is then a dictionary lookup instead of a scan over all changes.
             var referencedInserts = BuildReferencedInsertIndex(changes);
+            var counts = new Dictionary<ForeignKeyConstraint, int>();
 
             for (int i = 0; i < changes.Count; i++)
             {
@@ -626,32 +624,18 @@ namespace SyncChanges
                         || !insertsByValue.TryGetValue(val, out var positions))
                         continue;
 
-                    if (change.CreationVersion < change.Version) // was inserted then later updated
+                    var lastInsert = positions[positions.Count - 1];
+                    if (lastInsert > i) // referenced row is inserted after this change
                     {
-                        foreach (var j in positions)
-                        {
-                            var insert = changes[j];
-                            if (j > i && insert.CreationVersion <= change.Version) // referenced row was inserted in between
-                            {
-                                // this foreign key constraint needs to be disabled
-                                Log.Info($"Foreign key constraint {fk.ForeignKeyName} needs to be disabled for change #{i + 1} from version {change.CreationVersion} until version {insert.CreationVersion}");
-                                change.ForeignKeyConstraintsToDisable[fk] = insert.CreationVersion;
-                            }
-                        }
-                    }
-
-                    foreach (var j in positions)
-                    {
-                        var insert = changes[j];
-                        if (j != i && insert.CreationVersion == change.CreationVersion && insert.Version == change.Version) // referenced row was inserted in the same version
-                        {
-                            // this foreign key constraint needs to be disabled
-                            Log.Info($"Foreign key constraint {fk.ForeignKeyName} needs to be disabled for change #{i + 1} for version {change.CreationVersion}");
-                            change.ForeignKeyConstraintsToDisable[fk] = insert.CreationVersion;
-                        }
+                        Log.Debug($"Foreign key constraint {fk.ForeignKeyName} needs to be disabled for change #{i + 1}, the referenced row is inserted by change #{lastInsert + 1}");
+                        change.ForeignKeyConstraintsToDisable.Add(fk);
+                        counts[fk] = counts.TryGetValue(fk, out var count) ? count + 1 : 1;
                     }
                 }
             }
+
+            foreach (var fk in counts)
+                Log.Info($"Foreign key constraint {fk.Key.ForeignKeyName} needs to be disabled for {"change".ToQuantity(fk.Value)}");
         }
 
         private static Dictionary<(string Table, string Column), Dictionary<object, List<int>>> BuildReferencedInsertIndex(List<Change> changes)

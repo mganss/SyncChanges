@@ -603,6 +603,62 @@ namespace SyncChanges.Tests
             }
         }
 
+        [TestCase(1)]
+        [TestCase(100)]
+        public void ReferencedRowUpdatedLaterTest(int batchSize)
+        {
+            try
+            {
+                CreateUsersTable();
+                CreateOrdersTable();
+                CreateOrdersForeignKey(SourceDatabaseName);
+                CreateOrdersForeignKey(DestinationDatabaseName);
+
+                var sourceUser = new User { Name = "Michael Jordan", Age = 54, DateOfBirth = new DateTime(1963, 2, 17), Savings = 1.31m * 1e9m };
+                var sourceUser2 = new User { Name = "Larry Bird", Age = 60, DateOfBirth = new DateTime(1956, 12, 7), Savings = 45m * 1e6m };
+                var sourceOrder = new Order { OrderId = 1 };
+                var sourceOrder2 = new Order { OrderId = 2 };
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                {
+                    // The users are updated after the orders referencing them were inserted, so their inserts
+                    // are replicated at the version of that update, after the orders.
+                    db.Insert(sourceUser);
+                    sourceOrder.UserId = sourceUser.UserId;
+                    db.Insert(sourceOrder);
+
+                    db.BeginTransaction(); // user and order inserted in the same version
+                    db.Insert(sourceUser2);
+                    sourceOrder2.UserId = sourceUser2.UserId;
+                    db.Insert(sourceOrder2);
+                    db.CompleteTransaction();
+
+                    sourceUser.Savings += 1;
+                    db.Update(sourceUser);
+                    sourceUser2.Savings += 1;
+                    db.Update(sourceUser2);
+                }
+
+                var synchronizer = new Synchronizer(TestConfig) { BatchSize = batchSize };
+                var success = synchronizer.Sync();
+
+                Assert.That(success, Is.True);
+
+                using (var db = GetDatabase(DestinationDatabaseName))
+                {
+                    Assert.That(db.Fetch<User>("select * from Users"), Is.EquivalentTo(new[] { sourceUser, sourceUser2 }));
+                    Assert.That(db.Fetch<Order>("select * from Orders"), Is.EquivalentTo(new[] { sourceOrder, sourceOrder2 }));
+                    var untrusted = db.ExecuteScalar<int>("select count(*) from sys.foreign_keys where is_not_trusted = 1 or is_disabled = 1");
+                    Assert.That(untrusted, Is.EqualTo(0));
+                }
+            }
+            finally
+            {
+                DropTable("Orders");
+                DropTable("Users");
+            }
+        }
+
         [Test]
         public void UniqueTest()
         {

@@ -11,7 +11,7 @@ namespace SyncChanges
         public char Operation { get; set; }
         public Dictionary<string, object> Keys { get; private set; } = [];
         public Dictionary<string, object> Others { get; private set; } = [];
-        public Dictionary<ForeignKeyConstraint, long> ForeignKeyConstraintsToDisable { get; private set; } = [];
+        public HashSet<ForeignKeyConstraint> ForeignKeyConstraintsToDisable { get; private set; } = [];
 
         public object[] GetValues() => [.. Keys.Values, .. Others.Values];
 

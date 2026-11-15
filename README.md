@@ -105,7 +105,7 @@ This can become a problem when you're dealing with foreign key constraints, spec
 1. If you try to insert the row at the version number it was originally inserted into the source database (with a different, unknown value) the row in the referenced table might not exist yet.
 2. If you try to defer insertion of the row to the version number it was last updated in the source database, rows in other tables referencing the row might have been inserted before this point, violating foreign key constraints.
 
-To overcome this problem, SyncChanges determines all occurrences of these kinds of deadlocks and disables (only) the corresponding foreign key constraints for the minimum amount of time possible.
+SyncChanges replicates each change at the version of its last update. To overcome this problem, it finds the changes that come before the insert of a row their foreign key points to, and disables (only) the corresponding foreign key constraints from the first such change on. All disabled constraints are re-enabled with a check of the existing rows once all changes are in, within the same transaction, so the constraints are never off for anything but the replication's own statements, and a violation still fails the replication.
 
 Logging
 -------
