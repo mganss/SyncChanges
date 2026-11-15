@@ -67,8 +67,8 @@ namespace SyncChanges
         bool Error { get; set; }
         CancellationToken Token { get; set; }
 
-        private IList<IList<TableInfo>> Tables { get; } = [];
-        private readonly bool[] InitializedReplicationSets = new bool[config.ReplicationSets.Count];
+        // by the index of the replication set; null for a set that has not been initialized yet
+        private readonly IList<TableInfo>[] Tables = new IList<TableInfo>[config.ReplicationSets.Count];
 
         /// <summary>
         /// Initialize the synchronization process.
@@ -86,7 +86,7 @@ namespace SyncChanges
             if (index < 0 || index >= Config.ReplicationSets.Count)
                 throw new ArgumentOutOfRangeException(nameof(index), "Index is out of range.");
 
-            if (InitializedReplicationSets[index])
+            if (Tables[index] != null)
                 return;
 
             var replicationSet = Config.ReplicationSets[index];
@@ -104,8 +104,7 @@ namespace SyncChanges
             else
                 Log.Info($"Replicating {"table".ToQuantity(tables.Count, ShowQuantityAs.None)} {string.Join(", ", tables.Select(t => t.Name))}");
 
-            Tables.Add(tables);
-            InitializedReplicationSets[index] = true;
+            Tables[index] = tables;
         }
 
         /// <summary>
@@ -284,7 +283,6 @@ namespace SyncChanges
                             when ty.name = 'text' then 'varchar(max)'
                             when ty.name = 'ntext' then 'nvarchar(max)'
                             when ty.name = 'image' then 'varbinary(max)'
-                            when ty.name = 'timestamp' then 'binary(8)'
                             else ty.name
                         end ColumnType
                         from sys.change_tracking_tables tr
@@ -294,7 +292,11 @@ namespace SyncChanges
                         join sys.types ty on ty.user_type_id = case when a.system_type_id = 240 then a.user_type_id else a.system_type_id end
                         left join sys.index_columns c on c.object_id = t.object_id and c.column_id = a.column_id
                         left join sys.indexes i on i.object_id = t.object_id and i.index_id = c.index_id
-                        where a.is_computed = 0
+                        -- the destination generates the values of these columns itself and refuses explicit ones:
+                        -- rowversion (timestamp), and GENERATED ALWAYS columns such as the period columns of temporal tables
+                        -- (the property is null before SQL Server 2016, which has no such columns)
+                        where a.is_computed = 0 and a.system_type_id <> 189
+                            and coalesce(columnproperty(a.object_id, a.name, 'GeneratedAlwaysType'), 0) = 0
                         ) X
                         group by TableName, ColumnName
                         order by TableName, ColumnName";
@@ -780,6 +782,12 @@ namespace SyncChanges
                 // Update
                 case 'U':
                     var updateColumnNames = change.Others.Keys.ToList();
+                    // a table with only key columns has nothing to update: a changed key is tracked as a delete and an insert
+                    if (updateColumnNames.Count == 0)
+                    {
+                        Log.Debug($"Skipping update of {tableName}, which has no columns besides its key");
+                        break;
+                    }
                     var updateValues = change.GetValues();
                     var updateSql = string.Format("update {0} set {1} where {2}", tableName,
                         string.Join(", ", updateColumnNames.Select((c, i) => $"{c} = @{i + change.Keys.Count}")),

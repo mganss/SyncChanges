@@ -1000,6 +1000,147 @@ namespace SyncChanges.Tests
             }
         }
 
+        Config ConfigForTables(params string[] tables) => new()
+        {
+            ReplicationSets =
+            {
+                new ReplicationSet
+                {
+                    Name = "Test",
+                    Source = new DatabaseInfo { Name = "Source", ConnectionString = GetConnectionString(SourceDatabaseName) },
+                    Destinations = { new DatabaseInfo { Name = "Destination", ConnectionString = GetConnectionString(DestinationDatabaseName) } },
+                    Tables = [.. tables]
+                }
+            }
+        };
+
+        [Test]
+        public void KeyOnlyTableTest()
+        {
+            const string compare = "select concat(UserId, '-', RoleId) from UserRoles order by UserId, RoleId";
+
+            try
+            {
+                DropTable("UserRoles");
+                foreach (var dbName in new[] { SourceDatabaseName, DestinationDatabaseName })
+                {
+                    using var db = GetDatabase(dbName);
+                    db.Execute("create table UserRoles (UserId int not null, RoleId int not null, primary key (UserId, RoleId))");
+                    db.Execute("alter table UserRoles enable CHANGE_TRACKING with (TRACK_COLUMNS_UPDATED = OFF)");
+                }
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                    db.Execute("insert into UserRoles values (1, 1), (1, 2), (2, 1)");
+
+                var config = ConfigForTables("UserRoles");
+                Assert.That(new Synchronizer(config).Sync(), Is.True);
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                {
+                    // tracked as an update, although the table has no columns to update
+                    db.Execute("update UserRoles set RoleId = RoleId where UserId = 1");
+                    db.Execute("insert into UserRoles values (3, 3)");
+                }
+
+                var (success, log) = SyncWithLog(new Synchronizer(config));
+                Assert.That(success, Is.True, () => string.Join(Environment.NewLine, log.Where(l => l.Contains("rror"))));
+
+                using var source = GetDatabase(SourceDatabaseName);
+                using var destination = GetDatabase(DestinationDatabaseName);
+                Assert.That(destination.Fetch<string>(compare), Is.EqualTo(source.Fetch<string>(compare)));
+            }
+            finally
+            {
+                DropTable("UserRoles");
+            }
+        }
+
+        [Test]
+        public void GeneratedColumnsTest()
+        {
+            const string compare = "select concat(Id, '-', Name) from Users order by Id";
+
+            try
+            {
+                DropTable("Users");
+                foreach (var dbName in new[] { SourceDatabaseName, DestinationDatabaseName })
+                {
+                    using var db = GetDatabase(dbName);
+                    db.Execute(@"create table Users (Id int primary key not null, Name nvarchar(50) null, RowVersion rowversion,
+                        ValidFrom datetime2 generated always as row start hidden not null default sysutcdatetime(),
+                        ValidTo datetime2 generated always as row end hidden not null default '9999-12-31 23:59:59.9999999',
+                        period for system_time (ValidFrom, ValidTo))");
+                    db.Execute("alter table Users enable CHANGE_TRACKING with (TRACK_COLUMNS_UPDATED = OFF)");
+                }
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                    db.Execute("insert into Users (Id, Name) values (1, N'Larry'), (2, N'Michael')");
+
+                var config = ConfigForTables("Users");
+                var (success, log) = SyncWithLog(new Synchronizer(config));
+                Assert.That(success, Is.True, () => string.Join(Environment.NewLine, log.Where(l => l.Contains("rror"))));
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                    db.Execute("update Users set Name = N'Larry Bird' where Id = 1");
+
+                (success, log) = SyncWithLog(new Synchronizer(config));
+                Assert.That(success, Is.True, () => string.Join(Environment.NewLine, log.Where(l => l.Contains("rror"))));
+
+                using var source = GetDatabase(SourceDatabaseName);
+                using var destination = GetDatabase(DestinationDatabaseName);
+                Assert.That(destination.Fetch<string>(compare), Is.EqualTo(source.Fetch<string>(compare)));
+            }
+            finally
+            {
+                DropTable("Users");
+            }
+        }
+
+        [Test]
+        public void LoopWithFailingReplicationSetTest()
+        {
+            try
+            {
+                CreateUsersTable();
+
+                var sourceUser = new User { Name = "Michael Jordan", Age = 54, DateOfBirth = new DateTime(1963, 2, 17), Savings = 1.31m * 1e9m };
+                using (var db = GetDatabase(SourceDatabaseName))
+                    db.Insert(sourceUser);
+
+                // the first set cannot be initialized, which must not affect the second one
+                var failing = new ReplicationSet
+                {
+                    Name = "Failing",
+                    Source = new DatabaseInfo { Name = "Error", ConnectionString = GetConnectionString("Error") },
+                    Destinations = { new DatabaseInfo { Name = "Destination", ConnectionString = GetConnectionString(DestinationDatabaseName) } },
+                };
+                var config = new Config { ReplicationSets = { failing, TestReplicationSet } };
+
+                var synchronizer = new Synchronizer(config) { Interval = 600 };
+                var synced = new ManualResetEventSlim(false);
+                synchronizer.Synced += (s, e) => { if (e.ReplicationSet == TestReplicationSet) synced.Set(); };
+                using var src = new CancellationTokenSource();
+                var t = Task.Factory.StartNew(() => synchronizer.SyncLoop(src.Token), TaskCreationOptions.LongRunning);
+
+                try
+                {
+                    Assert.That(synced.Wait(TimeSpan.FromSeconds(60)), Is.True, "second replication set was not replicated");
+                }
+                finally
+                {
+                    src.Cancel();
+                    t.Wait(TimeSpan.FromSeconds(30));
+                }
+
+                using var destination = GetDatabase(DestinationDatabaseName);
+                Assert.That(destination.Fetch<User>("select * from Users"), Is.EquivalentTo(new[] { sourceUser }));
+            }
+            finally
+            {
+                DropTable("Users");
+            }
+        }
+
         [Test]
         public void NullConfigTest()
         {

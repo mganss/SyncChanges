@@ -29,7 +29,8 @@ namespace SyncChanges.Service
             InitializeComponent();
         }
 
-        protected override async void OnStart(string[] args)
+        // OnStart must return once the service is running. An exception thrown here reports the start as failed.
+        protected override void OnStart(string[] args)
         {
             Config config = null;
 
@@ -59,15 +60,23 @@ namespace SyncChanges.Service
                     Synchronizer.DryRun = dryRun.Equals("true", StringComparison.OrdinalIgnoreCase);
                 if (config.BatchSize == null && AppSetting("BatchSize") is string batchSize)
                     Synchronizer.BatchSize = int.Parse(batchSize);
-                SyncTask = Task.Factory.StartNew(() => Synchronizer.SyncLoop(CancellationTokenSource.Token), TaskCreationOptions.LongRunning);
-                await SyncTask;
             }
             catch (Exception ex)
             {
                 ExitCode = 1064;
-                Log.Error(ex, $"Error synchronizing databases");
+                Log.Error(ex, $"Error setting up synchronization");
                 throw;
             }
+
+            SyncTask = Task.Factory.StartNew(() => Synchronizer.SyncLoop(CancellationTokenSource.Token), TaskCreationOptions.LongRunning);
+
+            // the loop handles the errors of a replication itself, so this is an error it cannot recover from
+            SyncTask.ContinueWith(t =>
+            {
+                Log.Error(t.Exception, "Error synchronizing databases");
+                ExitCode = 1064;
+                Stop();
+            }, TaskContinuationOptions.OnlyOnFaulted);
         }
 
         private static string AppSetting(string key) =>
@@ -75,8 +84,17 @@ namespace SyncChanges.Service
 
         protected override void OnStop()
         {
-            CancellationTokenSource.Cancel();
-            SyncTask.Wait();
+            // null if the service failed to start
+            CancellationTokenSource?.Cancel();
+
+            try
+            {
+                SyncTask?.Wait();
+            }
+            catch (AggregateException)
+            {
+                // logged when the task failed
+            }
         }
     }
 }

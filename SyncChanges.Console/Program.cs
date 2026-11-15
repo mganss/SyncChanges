@@ -87,49 +87,77 @@ namespace SyncChanges.Console
 
         void Sync()
         {
+            var synchronizers = new List<(string ConfigFile, Synchronizer Synchronizer)>();
+
             foreach (var configFile in ConfigFiles)
             {
-                Config config = null;
-
                 try
                 {
-                    config = JsonConvert.DeserializeObject<Config>(File.ReadAllText(configFile));
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex, $"Error reading configuration file {configFile}");
-                    Error = true;
-                    continue;
-                }
-
-                try
-                {
+                    var config = JsonConvert.DeserializeObject<Config>(File.ReadAllText(configFile));
                     var synchronizer = new Synchronizer(config);
                     if (DryRun.HasValue) synchronizer.DryRun = DryRun.Value;
                     if (Timeout.HasValue) synchronizer.Timeout = Timeout.Value;
                     if (Interval.HasValue) synchronizer.Interval = Interval.Value;
                     if (BatchSize.HasValue) synchronizer.BatchSize = BatchSize.Value;
+                    synchronizers.Add((configFile, synchronizer));
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, $"Error reading configuration file {configFile}");
+                    Error = true;
+                }
+            }
 
-                    if (!Loop)
+            if (!Loop)
+            {
+                foreach (var (configFile, synchronizer) in synchronizers)
+                {
+                    try
                     {
                         var success = synchronizer.Sync();
                         Error = Error || !success;
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        using var cancellationTokenSource = new CancellationTokenSource();
-                        System.Console.CancelKeyPress += (s, e) =>
-                        {
-                            cancellationTokenSource.Cancel();
-                            e.Cancel = true;
-                        };
-                        synchronizer.SyncLoop(cancellationTokenSource.Token);
+                        Log.Error(ex, $"Error synchronizing databases for configuration {configFile}");
+                        Error = true;
                     }
                 }
-                catch (Exception ex)
+            }
+            else
+            {
+                // a loop never ends by itself, so the loops of all configuration files run at the same time,
+                // until Ctrl+C stops them all
+                using var cancellationTokenSource = new CancellationTokenSource();
+
+                void Cancel(object sender, ConsoleCancelEventArgs e)
                 {
-                    Log.Error(ex, $"Error synchronizing databases for configuration {configFile}");
-                    Error = true;
+                    e.Cancel = true;
+                    cancellationTokenSource.Cancel();
+                }
+
+                System.Console.CancelKeyPress += Cancel;
+
+                try
+                {
+                    var loops = synchronizers.Select(s => Task.Factory.StartNew(() =>
+                    {
+                        try
+                        {
+                            s.Synchronizer.SyncLoop(cancellationTokenSource.Token);
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Error(ex, $"Error synchronizing databases for configuration {s.ConfigFile}");
+                            Error = true;
+                        }
+                    }, TaskCreationOptions.LongRunning)).ToArray();
+
+                    Task.WaitAll(loops);
+                }
+                finally
+                {
+                    System.Console.CancelKeyPress -= Cancel;
                 }
             }
         }
