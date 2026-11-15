@@ -588,54 +588,136 @@ namespace SyncChanges
                     db.CompleteTransaction();
             }
 
-            changeInfo.Changes.AddRange(changes.OrderBy(c => c.Version).ThenBy(c => c.Table.Name));
-
-            ComputeForeignKeyConstraintsToDisable(changeInfo);
+            changeInfo.Changes.AddRange(OrderForForeignKeys([.. changes.OrderBy(c => c.Version).ThenBy(c => c.Table.Name)]));
 
             return changeInfo;
         }
 
         /// <summary>
-        /// Finds the changes that are replicated before the insert of a row their foreign key points to.
-        /// Changes are replicated in the order of the version of their last change, and an insert takes
-        /// the version of the row's last update, so a referenced row inserted early but updated later is
-        /// inserted after the rows that reference it. Its foreign key constraint is disabled from the
-        /// first such change on.
+        /// Orders the changes so that a row is inserted before the rows that reference it.
         /// </summary>
-        private void ComputeForeignKeyConstraintsToDisable(ChangeInfo changeInfo)
+        /// <remarks>
+        /// <para>
+        /// Changes come in the order of the version of their last change, and an insert carries the row's values
+        /// from its last update. So a row that was inserted, then referenced by new rows, then updated, is inserted
+        /// after the rows that reference it. Such an insert of a referencing row is deferred until just after the
+        /// insert of the row it references, which needs no foreign key constraint to be disabled. Disabling one
+        /// takes a schema modification lock on the table until the transaction ends, which blocks all readers of
+        /// the destination table, even those reading uncommitted data.
+        /// </para>
+        /// <para>
+        /// Deferring an insert cannot violate a unique constraint that the original order does not violate: until
+        /// the row is inserted it holds no values, and the rows changed in between then hold their final values,
+        /// which agree with the row's final values as they do in the source database.
+        /// </para>
+        /// <para>
+        /// An update is not deferred, as its row keeps its old values in the meantime, which other changes may
+        /// rely on having changed. An update referencing a row inserted later, and inserts referencing each other
+        /// in a cycle, disable the foreign key constraint instead; it is re-enabled once all changes are in.
+        /// </para>
+        /// </remarks>
+        private static List<Change> OrderForForeignKeys(List<Change> changes)
         {
-            var changes = changeInfo.Changes; // in the order they are replicated
-
-            // For each referenced column of a foreign key: the positions in changes of inserts into the referenced table,
-            // by the value of the referenced column, in ascending order. Looking up the inserts that a change's foreign key
-            // value points to is then a dictionary lookup instead of a scan over all changes.
             var referencedInserts = BuildReferencedInsertIndex(changes);
-            var counts = new Dictionary<ForeignKeyConstraint, int>();
+            var done = new bool[changes.Count];
+            var ordered = new List<Change>(changes.Count);
+            var waiting = new Dictionary<int, List<int>>(); // by the position of an insert: the deferred inserts waiting for it
+            var released = new Queue<int>();
+            var deferred = new HashSet<int>();
+            var disabled = new Dictionary<ForeignKeyConstraint, int>();
 
-            for (int i = 0; i < changes.Count; i++)
+            // The positions of the inserts of the row that the change at position i references through fk,
+            // if none of them has been replicated yet, otherwise null.
+            List<int> PendingInserts(int i, ForeignKeyConstraint fk)
             {
-                var change = changes[i];
+                var val = changes[i].GetValue(fk.ColumnName);
+                if (val == null
+                    || !referencedInserts.TryGetValue((fk.ReferencedTableName, fk.ReferencedColumnName), out var insertsByValue)
+                    || !insertsByValue.TryGetValue(val, out var positions)
+                    || positions.Any(j => j == i || done[j])) // a row may reference itself
+                    return null;
+                return positions;
+            }
 
-                foreach (var fk in change.Table.ForeignKeyConstraints)
+            void Add(int i)
+            {
+                ordered.Add(changes[i]);
+                done[i] = true;
+
+                if (waiting.TryGetValue(i, out var waiters))
                 {
-                    var val = change.GetValue(fk.ColumnName);
-                    if (val == null
-                        || !referencedInserts.TryGetValue((fk.ReferencedTableName, fk.ReferencedColumnName), out var insertsByValue)
-                        || !insertsByValue.TryGetValue(val, out var positions))
-                        continue;
-
-                    var lastInsert = positions[positions.Count - 1];
-                    if (lastInsert > i) // referenced row is inserted after this change
-                    {
-                        Log.Debug($"Foreign key constraint {fk.ForeignKeyName} needs to be disabled for change #{i + 1}, the referenced row is inserted by change #{lastInsert + 1}");
-                        change.ForeignKeyConstraintsToDisable.Add(fk);
-                        counts[fk] = counts.TryGetValue(fk, out var count) ? count + 1 : 1;
-                    }
+                    waiting.Remove(i);
+                    foreach (var w in waiters)
+                        released.Enqueue(w);
                 }
             }
 
-            foreach (var fk in counts)
+            void AddDisablingForeignKeys(int i)
+            {
+                var change = changes[i];
+
+                foreach (var fk in change.Table.ForeignKeyConstraints.Where(f => PendingInserts(i, f) != null))
+                {
+                    if (!change.ForeignKeyConstraintsToDisable.Add(fk)) continue;
+                    Log.Debug($"Foreign key constraint {fk.ForeignKeyName} needs to be disabled for change of table {change.Table.Name} (Version {change.Version}, CreationVersion {change.CreationVersion})");
+                    disabled[fk] = disabled.TryGetValue(fk, out var count) ? count + 1 : 1;
+                }
+
+                Add(i);
+            }
+
+            void Schedule(int i)
+            {
+                if (done[i]) return;
+
+                var change = changes[i];
+                var pending = change.Table.ForeignKeyConstraints
+                    .Select(f => (ForeignKey: f, Positions: PendingInserts(i, f)))
+                    .FirstOrDefault(p => p.Positions != null);
+
+                if (pending.Positions == null)
+                    Add(i);
+                else if (change.Operation == 'I')
+                {
+                    // wait for the first insert of the referenced row; the others are checked again when it is released
+                    var position = pending.Positions[0];
+                    Log.Debug($"Deferring insert into {change.Table.Name} (Version {change.Version}) until the row it references through {pending.ForeignKey.ForeignKeyName} is inserted");
+                    if (!waiting.TryGetValue(position, out var waiters))
+                        waiting[position] = waiters = [];
+                    waiters.Add(i);
+                    deferred.Add(i);
+                }
+                else
+                    AddDisablingForeignKeys(i);
+            }
+
+            void ScheduleReleased()
+            {
+                while (released.Count > 0)
+                    Schedule(released.Dequeue());
+            }
+
+            for (int i = 0; i < changes.Count; i++)
+            {
+                Schedule(i);
+                ScheduleReleased();
+            }
+
+            // what is still waiting references rows in a cycle
+            for (int i = 0; i < changes.Count; i++)
+            {
+                if (done[i]) continue;
+                AddDisablingForeignKeys(i);
+                ScheduleReleased();
+            }
+
+            if (deferred.Count > 0)
+                Log.Info($"Deferred {"insert".ToQuantity(deferred.Count)} until the rows they reference are inserted");
+
+            foreach (var fk in disabled)
                 Log.Info($"Foreign key constraint {fk.Key.ForeignKeyName} needs to be disabled for {"change".ToQuantity(fk.Value)}");
+
+            return ordered;
         }
 
         private static Dictionary<(string Table, string Column), Dictionary<object, List<int>>> BuildReferencedInsertIndex(List<Change> changes)

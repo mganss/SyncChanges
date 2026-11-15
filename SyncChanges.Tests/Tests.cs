@@ -639,23 +639,201 @@ namespace SyncChanges.Tests
                     db.Update(sourceUser2);
                 }
 
-                var synchronizer = new Synchronizer(TestConfig) { BatchSize = batchSize };
-                var success = synchronizer.Sync();
+                var (success, log) = SyncWithLog(new Synchronizer(TestConfig) { BatchSize = batchSize });
 
                 Assert.That(success, Is.True);
+                Assert.That(log, Has.Some.StartsWith("Deferring insert into [dbo].[Orders]"));
+                Assert.That(log, Has.None.StartsWith("Disabling foreign key constraint"));
 
                 using (var db = GetDatabase(DestinationDatabaseName))
                 {
                     Assert.That(db.Fetch<User>("select * from Users"), Is.EquivalentTo(new[] { sourceUser, sourceUser2 }));
                     Assert.That(db.Fetch<Order>("select * from Orders"), Is.EquivalentTo(new[] { sourceOrder, sourceOrder2 }));
-                    var untrusted = db.ExecuteScalar<int>("select count(*) from sys.foreign_keys where is_not_trusted = 1 or is_disabled = 1");
-                    Assert.That(untrusted, Is.EqualTo(0));
+                    AssertForeignKeysTrusted(db);
                 }
             }
             finally
             {
                 DropTable("Orders");
                 DropTable("Users");
+            }
+        }
+
+        [Test]
+        public void ReferencedRowUpdatedLaterUniqueTest()
+        {
+            try
+            {
+                CreateUsersTable();
+                CreateOrdersTable();
+                CreateOrdersForeignKey(SourceDatabaseName);
+                CreateOrdersForeignKey(DestinationDatabaseName);
+
+                var otherUser = new User { Name = "Michael Jordan", Age = 54, DateOfBirth = new DateTime(1963, 2, 17), Savings = 1.31m * 1e9m };
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                    db.Insert(otherUser);
+
+                Assert.That(new Synchronizer(TestConfig).Sync(), Is.True);
+
+                var sourceUser = new User { Name = "Michael Jordan", Age = 1, DateOfBirth = new DateTime(1963, 2, 17), Savings = 0 };
+                var sourceOrder = new Order { OrderId = 1 };
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                {
+                    db.Insert(sourceUser);
+                    sourceOrder.UserId = sourceUser.UserId;
+                    db.Insert(sourceOrder);
+                    otherUser.Age = 55; // frees (Name, Age) = (Michael Jordan, 54) of the unique constraint
+                    db.Update(otherUser);
+                    sourceUser.Age = 54; // and the new user takes it
+                    db.Update(sourceUser);
+                }
+
+                // Inserting the user before the order would insert it before otherUser frees its unique values.
+                var (success, log) = SyncWithLog(new Synchronizer(TestConfig));
+
+                Assert.That(success, Is.True);
+                Assert.That(log, Has.None.StartsWith("Disabling foreign key constraint"));
+
+                using (var db = GetDatabase(DestinationDatabaseName))
+                {
+                    Assert.That(db.Fetch<User>("select * from Users"), Is.EquivalentTo(new[] { otherUser, sourceUser }));
+                    Assert.That(db.Fetch<Order>("select * from Orders"), Is.EquivalentTo(new[] { sourceOrder }));
+                    AssertForeignKeysTrusted(db);
+                }
+            }
+            finally
+            {
+                DropTable("Orders");
+                DropTable("Users");
+            }
+        }
+
+        [Test]
+        public void UpdateReferencingRowInsertedLaterTest()
+        {
+            try
+            {
+                CreateUsersTable();
+                CreateOrdersTable();
+                CreateOrdersForeignKey(SourceDatabaseName);
+                CreateOrdersForeignKey(DestinationDatabaseName);
+
+                var sourceUser = new User { Name = "Michael Jordan", Age = 54, DateOfBirth = new DateTime(1963, 2, 17), Savings = 1.31m * 1e9m };
+                var sourceOrder = new Order { OrderId = 1 };
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                {
+                    db.Insert(sourceUser);
+                    sourceOrder.UserId = sourceUser.UserId;
+                    db.Insert(sourceOrder);
+                }
+
+                Assert.That(new Synchronizer(TestConfig).Sync(), Is.True);
+
+                var sourceUser2 = new User { Name = "Larry Bird", Age = 60, DateOfBirth = new DateTime(1956, 12, 7), Savings = 45m * 1e6m };
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                {
+                    db.Insert(sourceUser2);
+                    sourceOrder.UserId = sourceUser2.UserId; // an update, which is not deferred
+                    db.Update(sourceOrder);
+                    sourceUser2.Savings += 1;
+                    db.Update(sourceUser2);
+                }
+
+                var (success, log) = SyncWithLog(new Synchronizer(TestConfig));
+
+                Assert.That(success, Is.True);
+                Assert.That(log, Has.Some.EqualTo("Disabling foreign key constraint Orders_UserId_FK"));
+
+                using (var db = GetDatabase(DestinationDatabaseName))
+                {
+                    Assert.That(db.Fetch<User>("select * from Users"), Is.EquivalentTo(new[] { sourceUser, sourceUser2 }));
+                    Assert.That(db.Fetch<Order>("select * from Orders"), Is.EquivalentTo(new[] { sourceOrder }));
+                    AssertForeignKeysTrusted(db);
+                }
+            }
+            finally
+            {
+                DropTable("Orders");
+                DropTable("Users");
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void SelfReferenceTest(bool cycle)
+        {
+            try
+            {
+                CreateUsersTable();
+
+                foreach (var dbName in new[] { SourceDatabaseName, DestinationDatabaseName })
+                {
+                    using var db = GetDatabase(dbName);
+                    db.Execute("alter table Users add ParentId int null");
+                    db.Execute("alter table Users add constraint Users_ParentId_FK foreign key (ParentId) references Users(UserId)");
+                }
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                {
+                    // 1 <- 2 <- 3, then 1 and 2 are updated, so 3 comes first, then 1, then 2;
+                    // with a cycle, 1 is updated to reference 3
+                    db.Execute("insert into Users (Name, Age) values ('One', 1)");
+                    db.Execute("insert into Users (Name, Age, ParentId) values ('Two', 2, 1)");
+                    db.Execute("insert into Users (Name, Age, ParentId) values ('Three', 3, 2)");
+                    db.Execute($"update Users set Age = 11{(cycle ? ", ParentId = 3" : "")} where UserId = 1");
+                    db.Execute("update Users set Age = 12 where UserId = 2");
+                }
+
+                var (success, log) = SyncWithLog(new Synchronizer(TestConfig));
+
+                Assert.That(success, Is.True);
+                if (cycle)
+                    Assert.That(log, Has.Some.EqualTo("Disabling foreign key constraint Users_ParentId_FK"));
+                else
+                    Assert.That(log, Has.None.StartsWith("Disabling foreign key constraint"));
+
+                using (var db = GetDatabase(DestinationDatabaseName))
+                {
+                    var users = db.Fetch<string>("select concat(UserId, ':', Age, ':', ParentId) from Users order by UserId");
+                    Assert.That(users, Is.EqualTo(new[] { cycle ? "1:11:3" : "1:11:", "2:12:1", "3:3:2" }));
+                    AssertForeignKeysTrusted(db);
+                }
+            }
+            finally
+            {
+                DropTable("Users");
+            }
+        }
+
+        static void AssertForeignKeysTrusted(Database db)
+        {
+            var untrusted = db.ExecuteScalar<int>("select count(*) from sys.foreign_keys where is_not_trusted = 1 or is_disabled = 1");
+            Assert.That(untrusted, Is.EqualTo(0));
+        }
+
+        /// <summary>
+        /// Runs a synchronization and returns the messages it logged.
+        /// </summary>
+        static (bool Success, IList<string> Log) SyncWithLog(Synchronizer synchronizer)
+        {
+            var target = new NLog.Targets.MemoryTarget("memory") { Layout = "${message}" };
+            var config = NLog.LogManager.Configuration ?? new NLog.Config.LoggingConfiguration();
+            config.AddRule(NLog.LogLevel.Debug, NLog.LogLevel.Fatal, target);
+            NLog.LogManager.Configuration = config;
+
+            try
+            {
+                var success = synchronizer.Sync();
+                return (success, target.Logs.Select(l => l.Trim()).ToList());
+            }
+            finally
+            {
+                config.RemoveTarget("memory");
+                NLog.LogManager.Configuration = config;
             }
         }
 
