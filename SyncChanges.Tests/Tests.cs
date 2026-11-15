@@ -197,6 +197,122 @@ namespace SyncChanges.Tests
         }
 
         [Test]
+        public void PlanReuseTest()
+        {
+            try
+            {
+                CreateUsersTable();
+
+                // LocalDB closes databases when their last connection closes, which drops their plans
+                using (var db = GetDatabase())
+                    db.Execute($"alter database [{DestinationDatabaseName}] set AUTO_CLOSE OFF");
+
+                var sourceUsers = Enumerable.Range(1, 50).Select(i => new User
+                {
+                    Name = $"Plan User {i}",
+                    Age = i,
+                    DateOfBirth = new DateTime(1970, 1, 1).AddDays(i),
+                    Savings = i
+                }).ToList();
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                    foreach (var user in sourceUsers)
+                        db.Insert(user);
+
+                Assert.That(new Synchronizer(TestConfig) { BatchSize = 10 }.Sync(), Is.True);
+
+                using (var db = GetDatabase(DestinationDatabaseName))
+                {
+                    Assert.That(db.Fetch<User>("select * from Users"), Is.EquivalentTo(sourceUsers));
+
+                    // the inserts' text is the same in all five commands, so they share one plan
+                    // char(64) is @, which NPoco would take for a parameter
+                    var stats = db.Single<string>(@"select concat(count(*), ' ', sum(cp.usecounts))
+                        from sys.dm_exec_cached_plans cp cross apply sys.dm_exec_sql_text(cp.plan_handle) t
+                        where t.text like '(' + char(64) + '0 int%' and t.text like '%insert into \[dbo\].\[Users\]%' escape '\'").Split(' ');
+                    Assert.That(int.Parse(stats[0]), Is.EqualTo(1));
+                    Assert.That(long.Parse(stats[1]), Is.GreaterThanOrEqualTo(50));
+                }
+            }
+            finally
+            {
+                DropTable("Users");
+            }
+        }
+
+        [Test]
+        public void ColumnTypesTest()
+        {
+            const string columns = @"
+                        Id int primary key not null,
+                        Ascii varchar(20) null, AsciiMax varchar(max) null, Unicode nvarchar(30) null, UnicodeMax nvarchar(max) null,
+                        FixedAscii char(5) null, FixedUnicode nchar(5) null, OldText text null, OldUnicodeText ntext null,
+                        Bin binary(4) null, VarBin varbinary(16) null, VarBinMax varbinary(max) null, OldImage image null,
+                        Small smallint null, Tiny tinyint null, Big bigint null, Flag bit null,
+                        Dec decimal(18, 4) null, Num numeric(5, 2) null, Money money null, Real real null, Float float null,
+                        Date date null, Time time(3) null, DateTime datetime null, DateTime2 datetime2(7) null, SmallDateTime smalldatetime null,
+                        DateTimeOffset datetimeoffset(2) null, Guid uniqueidentifier null, Xml xml null";
+            const string values = @"
+                        'abc', replicate(cast('x' as varchar(max)), 9000), N'äöü€', replicate(cast(N'ü' as nvarchar(max)), 5000),
+                        'ab', N'äö', 'old text', N'old ünicode',
+                        0x01020304, 0x0A0B, cast(replicate(cast(0x0102 as varbinary(max)), 5000) as varbinary(max)), 0xFF,
+                        -32768, 255, 9223372036854775807, 1,
+                        12345678901234.5678, 123.45, 922337203685477.5807, 1.5, 3.141592653589793,
+                        '2026-11-15', '12:34:56.789', '2026-11-15 12:34:56.997', '2026-11-15 12:34:56.1234567', '2026-11-15 12:34',
+                        '2026-11-15 12:34:56.12 +01:00', newid(), N'<a b=""c"">ä</a>'";
+            const string compare = @"select concat_ws('|', Id, Ascii, len(AsciiMax), Unicode, len(UnicodeMax), FixedAscii, FixedUnicode,
+                        cast(OldText as varchar(max)), cast(OldUnicodeText as nvarchar(max)), convert(varchar(max), Bin, 1), convert(varchar(max), VarBin, 1),
+                        datalength(VarBinMax), convert(varchar(max), cast(OldImage as varbinary(max)), 1), Small, Tiny, Big, Flag, Dec, Num, Money,
+                        Real, Float, Date, Time, convert(varchar(30), DateTime, 121), convert(varchar(30), DateTime2, 121), SmallDateTime,
+                        DateTimeOffset, Guid, cast(Xml as nvarchar(max)), '#') from Users order by Id";
+
+            try
+            {
+                DropTable("Users");
+                foreach (var dbName in new[] { SourceDatabaseName, DestinationDatabaseName })
+                {
+                    using var db = GetDatabase(dbName);
+                    db.Execute($"create table Users ({columns})");
+                    db.Execute("alter table Users enable CHANGE_TRACKING with (TRACK_COLUMNS_UPDATED = OFF)");
+                }
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                {
+                    db.Execute($"insert into Users values (1, {values})");
+                    db.Execute($"insert into Users values (2, {values})");
+                    db.Execute("insert into Users (Id) values (3)"); // all nulls
+                    db.Execute($"insert into Users values (4, {values})");
+                }
+
+                var (success, log) = SyncWithLog(new Synchronizer(TestConfig));
+                Assert.That(success, Is.True, () => string.Join(Environment.NewLine, log.Where(l => l.Contains("rror"))));
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                {
+                    // values to nulls, nulls to values, a delete
+                    db.Execute("delete from Users where Id = 2");
+                    db.Execute("update Users set Id = Id where Id = 1"); // an update with the same values
+                    db.Execute($"delete from Users where Id = 3; insert into Users values (3, {values})");
+                    db.Execute("update Users set Ascii = null, Unicode = null, VarBin = null, OldImage = null, Dec = null, DateTime2 = null, Guid = null, Xml = null where Id = 4");
+                }
+
+                // with batches of several statements, so that statements of different kinds share a command
+                (success, log) = SyncWithLog(new Synchronizer(TestConfig) { BatchSize = 3 });
+                Assert.That(success, Is.True, () => string.Join(Environment.NewLine, log.Where(l => l.Contains("rror"))));
+
+                using var source = GetDatabase(SourceDatabaseName);
+                using var destination = GetDatabase(DestinationDatabaseName);
+                var expected = source.Fetch<string>(compare);
+                Assert.That(expected, Has.Count.EqualTo(3));
+                Assert.That(destination.Fetch<string>(compare), Is.EqualTo(expected));
+            }
+            finally
+            {
+                DropTable("Users");
+            }
+        }
+
+        [Test]
         public void VarBinaryTest()
         {
             try
@@ -820,7 +936,7 @@ namespace SyncChanges.Tests
         /// </summary>
         static (bool Success, IList<string> Log) SyncWithLog(Synchronizer synchronizer)
         {
-            var target = new NLog.Targets.MemoryTarget("memory") { Layout = "${message}" };
+            var target = new NLog.Targets.MemoryTarget("memory") { Layout = "${message} ${exception:format=message}" };
             var config = NLog.LogManager.Configuration ?? new NLog.Config.LoggingConfiguration();
             config.AddRule(NLog.LogLevel.Debug, NLog.LogLevel.Fatal, target);
             NLog.LogManager.Configuration = config;

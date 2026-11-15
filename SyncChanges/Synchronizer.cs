@@ -226,15 +226,32 @@ namespace SyncChanges
             try
             {
                 using var db = GetDatabase(dbInfo.ConnectionString, DatabaseType.SqlServer2008);
+                // ColumnType is the column's type as a parameter declaration of sp_executesql, e.g. nvarchar(200)
                 var sql = @"select TableName, ColumnName, coalesce(max(cast(is_primary_key as tinyint)), 0) PrimaryKey,
-                        coalesce(max(cast(is_identity as tinyint)), 0) IsIdentity from
+                        coalesce(max(cast(is_identity as tinyint)), 0) IsIdentity, max(ColumnType) ColumnType from
                         (
                         select ('[' + s.name + '].[' + t.name + ']') TableName, ('[' + COL_NAME(t.object_id, a.column_id) + ']') ColumnName,
-                        i.is_primary_key, a.is_identity
+                        i.is_primary_key, a.is_identity,
+                        case
+                            when ty.name in ('varchar', 'char', 'varbinary', 'binary')
+                                then ty.name + '(' + case when a.max_length = -1 then 'max' else cast(a.max_length as varchar(10)) end + ')'
+                            when ty.name in ('nvarchar', 'nchar')
+                                then ty.name + '(' + case when a.max_length = -1 then 'max' else cast(a.max_length / 2 as varchar(10)) end + ')'
+                            when ty.name in ('decimal', 'numeric')
+                                then ty.name + '(' + cast(a.precision as varchar(10)) + ', ' + cast(a.scale as varchar(10)) + ')'
+                            when ty.name in ('datetime2', 'time', 'datetimeoffset')
+                                then ty.name + '(' + cast(a.scale as varchar(10)) + ')'
+                            when ty.name = 'text' then 'varchar(max)'
+                            when ty.name = 'ntext' then 'nvarchar(max)'
+                            when ty.name = 'image' then 'varbinary(max)'
+                            when ty.name = 'timestamp' then 'binary(8)'
+                            else ty.name
+                        end ColumnType
                         from sys.change_tracking_tables tr
                         join sys.tables t on t.object_id = tr.object_id
                         join sys.schemas s on s.schema_id = t.schema_id
                         join sys.columns a on a.object_id = t.object_id
+                        join sys.types ty on ty.user_type_id = case when a.system_type_id = 240 then a.user_type_id else a.system_type_id end
                         left join sys.index_columns c on c.object_id = t.object_id and c.column_id = a.column_id
                         left join sys.indexes i on i.object_id = t.object_id and i.index_id = c.index_id
                         where a.is_computed = 0
@@ -248,7 +265,8 @@ namespace SyncChanges
                         Name = (string)g.Key,
                         KeyColumns = [.. g.Where(c => (int)c.PrimaryKey > 0).Select(c => (string)c.ColumnName)],
                         OtherColumns = [.. g.Where(c => (int)c.PrimaryKey == 0).Select(c => (string)c.ColumnName)],
-                        HasIdentity = g.Any(c => (int)c.IsIdentity > 0)
+                        HasIdentity = g.Any(c => (int)c.IsIdentity > 0),
+                        ColumnTypes = g.ToDictionary(c => (string)c.ColumnName, c => (string)c.ColumnType)
                     }).ToList();
 
                 var fks = db.Fetch<ForeignKeyConstraint>(@"select obj.name AS ForeignKeyName,
@@ -400,13 +418,13 @@ namespace SyncChanges
         private static void ReenableForeignKeyConstraint(StatementBatch batch, ForeignKeyConstraint fk)
         {
             Log.Debug($"Re-enabling foreign key constraint {fk.ForeignKeyName}");
-            batch.Add(_ => $"alter table {fk.TableName} with check check constraint [{fk.ForeignKeyName}]", []);
+            batch.Add($"alter table {fk.TableName} with check check constraint [{fk.ForeignKeyName}]");
         }
 
         private static void DisableForeignKeyConstraint(StatementBatch batch, ForeignKeyConstraint fk)
         {
             Log.Debug($"Disabling foreign key constraint {fk.ForeignKeyName}");
-            batch.Add(_ => $"alter table {fk.TableName} nocheck constraint [{fk.ForeignKeyName}]", []);
+            batch.Add($"alter table {fk.TableName} nocheck constraint [{fk.ForeignKeyName}]");
         }
 
         /// <summary>
@@ -414,12 +432,21 @@ namespace SyncChanges
         /// keeping their order. A command holds at most <c>batchSize</c> statements and
         /// at most <see cref="MaxParameters"/> parameters (SQL Server allows 2100).
         /// </summary>
+        /// <remarks>
+        /// A command's text differs from command to command, so SQL Server would compile its statements every time,
+        /// which takes longer than executing them. Each statement with parameters is therefore run through
+        /// <c>sp_executesql</c>, whose text and parameter declarations are the same for all changes of one kind to one
+        /// table, so its plan is compiled once and then reused. The command itself only holds the <c>exec</c> calls,
+        /// which take next to no time to compile. The statements' text and declarations are passed as parameters, so
+        /// they are not parsed for parameters again on the way, and are sent once per command.
+        /// </remarks>
         private sealed class StatementBatch(Database db, int batchSize, bool dryRun)
         {
             const int MaxParameters = 2000;
 
             private readonly StringBuilder Sql = new();
             private readonly List<object> Args = [];
+            private readonly Dictionary<string, int> TextParameters = []; // by statement text or declaration: the parameter holding it
             private int Statements;
             private int FirstChange;
             private int LastChange;
@@ -430,20 +457,58 @@ namespace SyncChanges
             public int CurrentChange { get; set; }
 
             /// <summary>
+            /// Adds a statement without parameters to the batch, sending the batch first if the statement would not fit.
+            /// </summary>
+            public void Add(string sql)
+            {
+                Reserve(0);
+                Sql.Append(sql).AppendLine(";");
+            }
+
+            /// <summary>
             /// Adds a statement to the batch, sending the batch first if the statement would not fit.
             /// </summary>
-            /// <param name="buildSql">Builds the statement's SQL, given the number of its first parameter (@n).</param>
+            /// <param name="sql">The statement's SQL, with parameters @0 to @n.</param>
+            /// <param name="parameters">The declarations of the parameters, e.g. <c>@0 int, @1 nvarchar(200)</c>.</param>
             /// <param name="args">The statement's parameter values.</param>
-            public void Add(Func<int, string> buildSql, object[] args)
+            public void Add(string sql, string parameters, object[] args)
             {
-                if (Statements > 0 && (Statements >= batchSize || Args.Count + args.Length > MaxParameters))
+                var newTexts = (TextParameters.ContainsKey(sql) ? 0 : 1) + (TextParameters.ContainsKey(parameters) ? 0 : 1);
+                Reserve(args.Length + newTexts);
+
+                var sqlParameter = TextParameter(sql);
+                var parametersParameter = TextParameter(parameters);
+
+                Sql.Append($"exec sp_executesql @{sqlParameter}, @{parametersParameter}");
+                foreach (var arg in args)
+                {
+                    Sql.Append($", @{Args.Count}");
+                    Args.Add(arg);
+                }
+                Sql.AppendLine(";");
+            }
+
+            private int TextParameter(string text)
+            {
+                if (!TextParameters.TryGetValue(text, out var parameter))
+                {
+                    parameter = Args.Count;
+                    TextParameters[text] = parameter;
+                    Args.Add(text);
+                }
+
+                return parameter;
+            }
+
+            // Makes room for a statement with the given number of new parameters, sending the batch first if needed.
+            private void Reserve(int parameters)
+            {
+                if (Statements > 0 && (Statements >= batchSize || Args.Count + parameters > MaxParameters))
                     Flush();
 
                 if (Statements == 0)
                     FirstChange = CurrentChange;
 
-                Sql.Append(buildSql(Args.Count)).AppendLine(";");
-                Args.AddRange(args);
                 Statements++;
                 LastChange = CurrentChange;
             }
@@ -470,6 +535,7 @@ namespace SyncChanges
                 {
                     Sql.Clear();
                     Args.Clear();
+                    TextParameters.Clear();
                     Statements = 0;
                 }
             }
@@ -757,55 +823,73 @@ namespace SyncChanges
             var table = change.Table;
             var tableName = table.Name;
 
+            // The statements number their parameters from @0 in the order of their columns (keys first), so the text of
+            // a statement and its parameter declarations is the same for all changes of one kind to a table.
             switch (change.Operation)
             {
                 // Insert
                 case 'I':
                     var insertColumnNames = change.GetColumnNames();
                     var insertValues = change.GetValues();
-                    string InsertSql(int offset)
-                    {
-                        var sql = string.Format("insert into {0} ({1}) values ({2})", tableName,
-                            string.Join(", ", insertColumnNames),
-                            string.Join(", ", Parameters(offset, insertColumnNames.Count)));
-                        if (table.HasIdentity)
-                            sql = $"set IDENTITY_INSERT {tableName} ON; {sql}; set IDENTITY_INSERT {tableName} OFF";
-                        return sql;
-                    }
+                    var insertSql = string.Format("insert into {0} ({1}) values ({2})", tableName,
+                        string.Join(", ", insertColumnNames),
+                        string.Join(", ", insertColumnNames.Select((c, i) => "@" + i)));
+                    if (table.HasIdentity)
+                        insertSql = $"set IDENTITY_INSERT {tableName} ON; {insertSql}; set IDENTITY_INSERT {tableName} OFF";
                     if (Log.IsDebugEnabled)
-                        Log.Debug($"Executing insert: {InsertSql(0)} ({FormatArgs(insertValues)})");
-                    batch.Add(InsertSql, insertValues);
+                        Log.Debug($"Executing insert: {insertSql} ({FormatArgs(insertValues)})");
+                    batch.Add(insertSql, ParameterDeclarations(table, insertColumnNames), TypeValues(table, insertColumnNames, insertValues));
                     break;
 
                 // Update
                 case 'U':
                     var updateColumnNames = change.Others.Keys.ToList();
                     var updateValues = change.GetValues();
-                    string UpdateSql(int offset) => string.Format("update {0} set {1} where {2}", tableName,
-                        string.Join(", ", updateColumnNames.Select((c, i) => $"{c} = @{offset + i + change.Keys.Count}")),
-                        PrimaryKeys(change, offset));
+                    var updateSql = string.Format("update {0} set {1} where {2}", tableName,
+                        string.Join(", ", updateColumnNames.Select((c, i) => $"{c} = @{i + change.Keys.Count}")),
+                        PrimaryKeys(change));
                     if (Log.IsDebugEnabled)
-                        Log.Debug($"Executing update: {UpdateSql(0)} ({FormatArgs(updateValues)})");
-                    batch.Add(UpdateSql, updateValues);
+                        Log.Debug($"Executing update: {updateSql} ({FormatArgs(updateValues)})");
+                    var updateParameterColumns = change.GetColumnNames();
+                    batch.Add(updateSql, ParameterDeclarations(table, updateParameterColumns), TypeValues(table, updateParameterColumns, updateValues));
                     break;
 
                 // Delete
                 case 'D':
                     var deleteValues = change.Keys.Values.ToArray();
-                    string DeleteSql(int offset) => string.Format("delete from {0} where {1}", tableName, PrimaryKeys(change, offset));
+                    var deleteSql = string.Format("delete from {0} where {1}", tableName, PrimaryKeys(change));
                     if (Log.IsDebugEnabled)
-                        Log.Debug($"Executing delete: {DeleteSql(0)} ({FormatArgs(deleteValues)})");
-                    batch.Add(DeleteSql, deleteValues);
+                        Log.Debug($"Executing delete: {deleteSql} ({FormatArgs(deleteValues)})");
+                    batch.Add(deleteSql, ParameterDeclarations(table, [.. change.Keys.Keys]), deleteValues);
                     break;
             }
         }
 
         private static string FormatArgs(object[] args) => string.Join(", ", args.Select((a, i) => $"@{i} = {a}"));
 
-        private static string PrimaryKeys(Change change, int offset) =>
-            string.Join(" and ", change.Keys.Keys.Select((c, i) => $"{c} = @{offset + i}"));
+        private static string PrimaryKeys(Change change) =>
+            string.Join(" and ", change.Keys.Keys.Select((c, i) => $"{c} = @{i}"));
 
-        private static IEnumerable<string> Parameters(int offset, int n) => Enumerable.Range(offset, n).Select(c => "@" + c);
+        private static string ParameterDeclarations(TableInfo table, IList<string> columnNames) =>
+            string.Join(", ", columnNames.Select((c, i) => $"@{i} {table.ColumnTypes[c]}"));
+
+        // Gives values a SQL type where the one derived from their .NET type does not fit the column: a null without
+        // a type is sent as nvarchar, which SQL Server does not convert to binary types, and a DateTime is sent as
+        // datetime, which would cut off the precision of a datetime2 column.
+        private static object[] TypeValues(TableInfo table, IList<string> columnNames, object[] values)
+        {
+            for (int i = 0; i < values.Length; i++)
+            {
+                var type = table.ColumnTypes[columnNames[i]];
+
+                if (values[i] == DBNull.Value && (type.StartsWith("binary") || type.StartsWith("varbinary")))
+                    values[i] = System.Data.SqlTypes.SqlBinary.Null;
+                else if (type.StartsWith("datetime2"))
+                    values[i] = new Microsoft.Data.SqlClient.SqlParameter { SqlDbType = System.Data.SqlDbType.DateTime2, Value = values[i] };
+            }
+
+            return values;
+        }
 
         private long GetCurrentVersion(DatabaseInfo dbInfo)
         {
