@@ -16,12 +16,14 @@ namespace SyncChanges.Console
         static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
         List<string> ConfigFiles;
-        bool DryRun;
         bool Error = false;
-        int Timeout = 0;
         bool Loop = false;
-        int Interval = 30;
-        int BatchSize = 100;
+
+        // set by options; null where an option is not given, so the configuration file's setting or the default applies
+        bool? DryRun;
+        int? Timeout;
+        int? Interval;
+        int? BatchSize;
 
         static int Main(string[] args)
         {
@@ -35,11 +37,12 @@ namespace SyncChanges.Console
                 {
                     var options = new OptionSet {
                         { "h|help", "Show this message and exit", v => showHelp = v != null },
-                        { "d|dryrun", "Do not alter target databases, only perform a test run", v => program.DryRun = v != null },
+                        { "d|dryrun", "Do not alter target databases, only perform a test run", v => program.DryRun = v != null ? true : null },
                         { "t|timeout=", "Database command timeout in seconds", (int v) => program.Timeout = v },
                         { "l|loop", "Perform replication in a loop, periodically checking for changes", v => program.Loop = v != null },
                         { "i|interval=", "Replication interval in seconds (default is 30); only relevant in loop mode", (int v) => program.Interval = v },
                         { "b|batchsize=", "Maximum number of statements sent to a destination database in one round trip (default is 100)", (int v) => program.BatchSize = v },
+                        // the options override the settings of a configuration file
                     };
 
                     program.ConfigFiles = options.Parse(args);
@@ -101,7 +104,12 @@ namespace SyncChanges.Console
 
                 try
                 {
-                    var synchronizer = new Synchronizer(config) { DryRun = DryRun, Timeout = Timeout, BatchSize = BatchSize };
+                    var synchronizer = new Synchronizer(config);
+                    if (DryRun.HasValue) synchronizer.DryRun = DryRun.Value;
+                    if (Timeout.HasValue) synchronizer.Timeout = Timeout.Value;
+                    if (Interval.HasValue) synchronizer.Interval = Interval.Value;
+                    if (BatchSize.HasValue) synchronizer.BatchSize = BatchSize.Value;
+
                     if (!Loop)
                     {
                         var success = synchronizer.Sync();
@@ -109,7 +117,6 @@ namespace SyncChanges.Console
                     }
                     else
                     {
-                        synchronizer.Interval = Interval;
                         using var cancellationTokenSource = new CancellationTokenSource();
                         System.Console.CancelKeyPress += (s, e) =>
                         {

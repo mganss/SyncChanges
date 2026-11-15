@@ -1007,6 +1007,29 @@ namespace SyncChanges.Tests
         }
 
         [Test]
+        public void ConfigSettingsTest()
+        {
+            var config = Newtonsoft.Json.JsonConvert.DeserializeObject<Config>(@"{
+                ""Timeout"": 300, ""Interval"": 10, ""BatchSize"": 500, ""DryRun"": true,
+                ""ReplicationSets"": [ { ""Name"": ""Test"", ""Tables"": [ ""Users"" ] } ]
+            }");
+
+            var synchronizer = new Synchronizer(config);
+            Assert.That(synchronizer.Timeout, Is.EqualTo(300));
+            Assert.That(synchronizer.Interval, Is.EqualTo(10));
+            Assert.That(synchronizer.BatchSize, Is.EqualTo(500));
+            Assert.That(synchronizer.DryRun, Is.True);
+            Assert.That(config.ReplicationSets.Single().Name, Is.EqualTo("Test"));
+
+            // without settings, the defaults apply
+            var defaults = new Synchronizer(Newtonsoft.Json.JsonConvert.DeserializeObject<Config>(@"{ ""ReplicationSets"": [] }"));
+            Assert.That(defaults.Timeout, Is.EqualTo(0));
+            Assert.That(defaults.Interval, Is.EqualTo(30));
+            Assert.That(defaults.BatchSize, Is.EqualTo(100));
+            Assert.That(defaults.DryRun, Is.False);
+        }
+
+        [Test]
         public void NoTablesTest()
         {
             var rs = new ReplicationSet

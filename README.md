@@ -66,6 +66,25 @@ A configuration file looks like this:
 
 `Tables` is optional. If you don't specify it, all tables will be replicated.
 
+The configuration file can also hold settings that apply to all replication sets. Each is optional; the console application's options and, for the service, a setting left out of the configuration file in `SyncChanges.Service.dll.config` apply instead:
+
+```json
+{
+  "Timeout": 300,
+  "Interval": 10,
+  "BatchSize": 500,
+  "DryRun": false,
+  "ReplicationSets": [ ... ]
+}
+```
+
+- `Timeout`: database command timeout in seconds (0 or not set: the database client's default of 30 seconds)
+- `Interval`: minimum time in seconds between replications in loop mode and in the service (default 30)
+- `BatchSize`: maximum number of statements sent to a destination database in one round trip (default 100)
+- `DryRun`: only perform a test run, do not alter destination databases (default `false`)
+
+The console application's options override the configuration file's settings.
+
 Change Tracking
 ---------------
 
@@ -119,7 +138,7 @@ Service
 
 In addition to the command line you can also run SyncChanges as a Windows service. The service periodically polls the value of [`CHANGE_TRACKING_CURRENT_VERSION`](https://docs.microsoft.com/en-us/sql/relational-databases/system-functions/change-tracking-current-version-transact-sql) in a configurable interval and starts replication if the version of the source has increased.
 
-The service runs on .NET 10 and needs its runtime installed. It expects a `config.json` configuration file in the same folder as the service executable. The desired polling interval, command timeout and batch size can be configured in the `SyncChanges.Service.dll.config` file.
+The service runs on .NET 10 and needs its runtime installed. It expects a `config.json` configuration file in the same folder as the service executable. The desired polling interval, command timeout and batch size can be configured in `config.json` (see above), or in the `SyncChanges.Service.dll.config` file, which applies where `config.json` doesn't set them.
 
 To install the service, use `sc.exe` from an elevated command prompt, with the full path of the executable:
 

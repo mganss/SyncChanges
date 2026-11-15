@@ -47,14 +47,17 @@ namespace SyncChanges.Service
 
             try
             {
-                var timeout = int.Parse(ConfigurationManager.AppSettings["Timeout"]);
-                var interval = int.Parse(ConfigurationManager.AppSettings["Interval"]);
-                var dryRun = ConfigurationManager.AppSettings["DryRun"].Equals("true", StringComparison.OrdinalIgnoreCase);
-
+                // The settings in config.json take precedence over those in SyncChanges.Service.dll.config,
+                // which are kept for installations configured there.
                 CancellationTokenSource = new();
-                Synchronizer = new Synchronizer(config) { Timeout = timeout, Interval = interval, DryRun = dryRun };
-                var batchSize = ConfigurationManager.AppSettings["BatchSize"];
-                if (!string.IsNullOrEmpty(batchSize))
+                Synchronizer = new Synchronizer(config);
+                if (config.Timeout == null && AppSetting("Timeout") is string timeout)
+                    Synchronizer.Timeout = int.Parse(timeout);
+                if (config.Interval == null && AppSetting("Interval") is string interval)
+                    Synchronizer.Interval = int.Parse(interval);
+                if (config.DryRun == null && AppSetting("DryRun") is string dryRun)
+                    Synchronizer.DryRun = dryRun.Equals("true", StringComparison.OrdinalIgnoreCase);
+                if (config.BatchSize == null && AppSetting("BatchSize") is string batchSize)
                     Synchronizer.BatchSize = int.Parse(batchSize);
                 SyncTask = Task.Factory.StartNew(() => Synchronizer.SyncLoop(CancellationTokenSource.Token), TaskCreationOptions.LongRunning);
                 await SyncTask;
@@ -66,6 +69,9 @@ namespace SyncChanges.Service
                 throw;
             }
         }
+
+        private static string AppSetting(string key) =>
+            ConfigurationManager.AppSettings[key] is string value && !string.IsNullOrWhiteSpace(value) ? value : null;
 
         protected override void OnStop()
         {

@@ -21,37 +21,41 @@ namespace SyncChanges
     public class Synchronizer(Config config)
     {
         /// <summary>
-        /// Gets or sets a value indicating whether destination databases will be modified during a replication run.
+        /// Gets or sets a value indicating whether a replication run only tests, without modifying destination databases.
+        /// Default is the configuration's <see cref="Config.DryRun"/>, or <c>false</c>.
         /// </summary>
         /// <value>
-        ///   <c>true</c> if destination databases will be modified; otherwise, <c>false</c>.
+        ///   <c>true</c> if destination databases will not be modified; otherwise, <c>false</c>.
         /// </value>
-        public bool DryRun { get; set; } = false;
+        public bool DryRun { get; set; } = config?.DryRun ?? false;
 
         /// <summary>
-        /// Gets or sets the database connection timeout.
+        /// Gets or sets the database command timeout in seconds. 0 leaves the default of the database client (30 seconds).
+        /// Default is the configuration's <see cref="Config.Timeout"/>, or 0.
         /// </summary>
         /// <value>
-        /// The database connection timeout.
+        /// The database command timeout in seconds.
         /// </value>
-        public int Timeout { get; set; } = 0;
+        public int Timeout { get; set; } = config?.Timeout ?? 0;
 
         /// <summary>
-        /// Gets or sets the minimum synchronization time interval in seconds. Default is 30 seconds.
+        /// Gets or sets the minimum synchronization time interval in seconds.
+        /// Default is the configuration's <see cref="Config.Interval"/>, or 30 seconds.
         /// </summary>
         /// <value>
         /// The synchronization time interval in seconds.
         /// </value>
-        public int Interval { get; set; } = 30;
+        public int Interval { get; set; } = config?.Interval ?? 30;
 
         /// <summary>
-        /// Gets or sets the maximum number of statements sent to a destination database in one round trip. Default is 100.
+        /// Gets or sets the maximum number of statements sent to a destination database in one round trip.
         /// Values less than 2 send each statement in its own round trip.
+        /// Default is the configuration's <see cref="Config.BatchSize"/>, or 100.
         /// </summary>
         /// <value>
-        /// The maximum number of statements per command.
+        /// The maximum number of statements per round trip.
         /// </value>
-        public int BatchSize { get; set; } = 100;
+        public int BatchSize { get; set; } = config?.BatchSize ?? 100;
 
         /// <summary>
         /// Occurs when synchronization from a synchronization loop has succeeded.

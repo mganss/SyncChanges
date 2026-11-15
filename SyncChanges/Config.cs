@@ -18,6 +18,42 @@ namespace SyncChanges
         /// The replication sets.
         /// </value>
         public List<ReplicationSet> ReplicationSets { get; private set; } = [];
+
+        /// <summary>
+        /// Gets or sets the database command timeout in seconds; 0 leaves the default of the database client (30 seconds).
+        /// If not set, the application's setting applies.
+        /// </summary>
+        /// <value>
+        /// The database command timeout in seconds.
+        /// </value>
+        public int? Timeout { get; set; }
+
+        /// <summary>
+        /// Gets or sets the minimum time in seconds between replications in a synchronization loop.
+        /// If not set, the application's setting applies.
+        /// </summary>
+        /// <value>
+        /// The replication interval in seconds.
+        /// </value>
+        public int? Interval { get; set; }
+
+        /// <summary>
+        /// Gets or sets the maximum number of statements sent to a destination database in one round trip.
+        /// If not set, the application's setting applies.
+        /// </summary>
+        /// <value>
+        /// The maximum number of statements per round trip.
+        /// </value>
+        public int? BatchSize { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether to only perform a test run, without altering destination databases.
+        /// If not set, the application's setting applies.
+        /// </summary>
+        /// <value>
+        /// <c>true</c> for a test run; otherwise, <c>false</c>.
+        /// </value>
+        public bool? DryRun { get; set; }
     }
 
     /// <summary>
