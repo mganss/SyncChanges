@@ -763,8 +763,8 @@ namespace SyncChanges.Tests
 
                 using (var db = GetDatabase(DestinationDatabaseName))
                 {
-                    Assert.That(db.Fetch<User>("select * from Users"), Is.EquivalentTo(new[] { sourceUser, sourceUser2 }));
-                    Assert.That(db.Fetch<Order>("select * from Orders"), Is.EquivalentTo(new[] { sourceOrder, sourceOrder2 }));
+                    Assert.That(db.Fetch<User>("select * from Users"), Is.EquivalentTo([sourceUser, sourceUser2]));
+                    Assert.That(db.Fetch<Order>("select * from Orders"), Is.EquivalentTo([sourceOrder, sourceOrder2]));
                     AssertForeignKeysTrusted(db);
                 }
             }
@@ -814,8 +814,8 @@ namespace SyncChanges.Tests
 
                 using (var db = GetDatabase(DestinationDatabaseName))
                 {
-                    Assert.That(db.Fetch<User>("select * from Users"), Is.EquivalentTo(new[] { otherUser, sourceUser }));
-                    Assert.That(db.Fetch<Order>("select * from Orders"), Is.EquivalentTo(new[] { sourceOrder }));
+                    Assert.That(db.Fetch<User>("select * from Users"), Is.EquivalentTo([otherUser, sourceUser]));
+                    Assert.That(db.Fetch<Order>("select * from Orders"), Is.EquivalentTo([sourceOrder]));
                     AssertForeignKeysTrusted(db);
                 }
             }
@@ -866,8 +866,8 @@ namespace SyncChanges.Tests
 
                 using (var db = GetDatabase(DestinationDatabaseName))
                 {
-                    Assert.That(db.Fetch<User>("select * from Users"), Is.EquivalentTo(new[] { sourceUser, sourceUser2 }));
-                    Assert.That(db.Fetch<Order>("select * from Orders"), Is.EquivalentTo(new[] { sourceOrder }));
+                    Assert.That(db.Fetch<User>("select * from Users"), Is.EquivalentTo([sourceUser, sourceUser2]));
+                    Assert.That(db.Fetch<Order>("select * from Orders"), Is.EquivalentTo([sourceOrder]));
                     AssertForeignKeysTrusted(db);
                 }
             }
@@ -915,7 +915,7 @@ namespace SyncChanges.Tests
                 using (var db = GetDatabase(DestinationDatabaseName))
                 {
                     var users = db.Fetch<string>("select concat(UserId, ':', Age, ':', ParentId) from Users order by UserId");
-                    Assert.That(users, Is.EqualTo(new[] { cycle ? "1:11:3" : "1:11:", "2:12:1", "3:3:2" }));
+                    Assert.That(users, Is.EqualTo([cycle ? "1:11:3" : "1:11:", "2:12:1", "3:3:2"]));
                     AssertForeignKeysTrusted(db);
                 }
             }
@@ -1000,7 +1000,7 @@ namespace SyncChanges.Tests
             }
         }
 
-        Config ConfigForTables(params string[] tables) => new()
+        static Config ConfigForTables(params string[] tables) => new()
         {
             ReplicationSets =
             {
@@ -1133,7 +1133,7 @@ namespace SyncChanges.Tests
                 }
 
                 using var destination = GetDatabase(DestinationDatabaseName);
-                Assert.That(destination.Fetch<User>("select * from Users"), Is.EquivalentTo(new[] { sourceUser }));
+                Assert.That(destination.Fetch<User>("select * from Users"), Is.EquivalentTo([sourceUser]));
             }
             finally
             {
@@ -1150,7 +1150,7 @@ namespace SyncChanges.Tests
                 foreach (var table in tables)
                 {
                     db.Execute($"create table {table}");
-                    db.Execute($"alter table {table.Substring(0, table.IndexOf('(')).Trim()} enable CHANGE_TRACKING with (TRACK_COLUMNS_UPDATED = OFF)");
+                    db.Execute($"alter table {table[..table.IndexOf('(')].Trim()} enable CHANGE_TRACKING with (TRACK_COLUMNS_UPDATED = OFF)");
                 }
                 foreach (var constraint in constraints)
                     db.Execute(constraint);
@@ -1663,7 +1663,7 @@ namespace SyncChanges.Tests
                 Assert.That(new Synchronizer(TestConfig).Sync(), Is.True);
 
                 using (var db = GetDatabase(DestinationDatabaseName))
-                    Assert.That(db.Fetch<User>("select * from Users"), Is.EquivalentTo(new[] { sourceUser }));
+                    Assert.That(db.Fetch<User>("select * from Users"), Is.EquivalentTo([sourceUser]));
             }
             finally
             {

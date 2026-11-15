@@ -70,7 +70,7 @@ namespace SyncChanges
         CancellationToken Token { get; set; }
 
         // by the index of the replication set; null for a set that has not been initialized yet
-        private readonly IList<TableInfo>[] Tables = new IList<TableInfo>[config.ReplicationSets.Count];
+        private readonly List<TableInfo>[] Tables = new List<TableInfo>[config.ReplicationSets.Count];
 
         /// <summary>
         /// Initialize the synchronization process.
@@ -96,10 +96,10 @@ namespace SyncChanges
             Log.Info($"Getting replication information for replication set {replicationSet.Name}");
 
             var tables = GetTables(replicationSet.Source);
-            if (replicationSet.Tables != null && replicationSet.Tables.Any())
+            if (replicationSet.Tables != null && replicationSet.Tables.Count > 0)
                 tables = [.. tables.Where(t => replicationSet.Tables.Exists(r => IsNameOf(r, t)))];
 
-            if (!tables.Any())
+            if (tables.Count == 0)
                 Log.Warn("No tables to replicate (check if change tracking is enabled)");
             else
                 Log.Info($"Replicating {"table".ToQuantity(tables.Count, ShowQuantityAs.None)} {string.Join(", ", tables.Select(t => t.Name))}");
@@ -116,8 +116,8 @@ namespace SyncChanges
             var separator = 1;
             while (table.Name[separator] != ']' || table.Name[separator + 1] == ']')
                 separator += table.Name[separator] == ']' ? 2 : 1;
-            var schemaName = table.Name.Substring(1, separator - 1).Replace("]]", "]");
-            var tableName = table.Name.Substring(separator + 3, table.Name.Length - separator - 4).Replace("]]", "]");
+            var schemaName = table.Name[1..separator].Replace("]]", "]");
+            var tableName = table.Name[(separator + 3)..^1].Replace("]]", "]");
             name = name.Trim();
 
             return new[] { table.Name, $"{schemaName}.{tableName}", QuoteName(tableName), tableName }
@@ -280,7 +280,7 @@ namespace SyncChanges
             Log.Info($"Batch size is {"statement".ToQuantity(Math.Max(1, BatchSize))}");
         }
 
-        private IList<TableInfo> GetTables(DatabaseInfo dbInfo)
+        private List<TableInfo> GetTables(DatabaseInfo dbInfo)
         {
             try
             {
@@ -679,17 +679,17 @@ namespace SyncChanges
                 if (done[i]) return;
 
                 var change = changes[i];
-                var pending = change.Table.ForeignKeyConstraints
+                var (foreignKey, positions) = change.Table.ForeignKeyConstraints
                     .Select(f => (ForeignKey: f, Positions: PendingInserts(i, f)))
                     .FirstOrDefault(p => p.Positions != null);
 
-                if (pending.Positions == null)
+                if (positions == null)
                     Add(i);
                 else if (change.Operation == 'I')
                 {
                     // wait for the first insert of the referenced row; the others are checked again when it is released
-                    var position = pending.Positions[0];
-                    Log.Debug($"Deferring insert into {change.Table.Name} (Version {change.Version}) until the row it references through {pending.ForeignKey.ForeignKeyName} is inserted");
+                    var position = positions[0];
+                    Log.Debug($"Deferring insert into {change.Table.Name} (Version {change.Version}) until the row it references through {foreignKey.ForeignKeyName} is inserted");
                     if (!waiting.TryGetValue(position, out var waiters))
                         waiting[position] = waiters = [];
                     waiters.Add(i);
@@ -851,7 +851,7 @@ namespace SyncChanges
                     if (refVal == null) continue;
 
                     if (!index.TryGetValue((change.Table.Name, column), out var insertsByValue))
-                        index[(change.Table.Name, column)] = insertsByValue = new(ValueComparer.Instance);
+                        index[(change.Table.Name, column)] = insertsByValue = [with(ValueComparer.Instance)];
 
                     if (!insertsByValue.TryGetValue(refVal, out var positions))
                         insertsByValue[refVal] = positions = [];

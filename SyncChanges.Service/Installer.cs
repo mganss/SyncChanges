@@ -13,7 +13,7 @@ namespace SyncChanges.Service
     /// Installs and uninstalls the service through the service control manager, as <c>sc.exe</c> does, but without
     /// a password on a command line that other processes can read.
     /// </summary>
-    static class Installer
+    static partial class Installer
     {
         const string DefaultServiceName = "SyncChangesService";
         const string DisplayName = "SyncChanges";
@@ -134,8 +134,15 @@ namespace SyncChanges.Service
 
                 try
                 {
-                    var description = new ServiceDescription { Description = Description };
-                    ChangeServiceConfig2(service, ServiceConfigDescription, ref description);
+                    var description = new ServiceDescription { Description = Marshal.StringToHGlobalUni(Description) };
+                    try
+                    {
+                        ChangeServiceConfig2(service, ServiceConfigDescription, ref description);
+                    }
+                    finally
+                    {
+                        Marshal.FreeHGlobal(description.Description);
+                    }
                 }
                 finally
                 {
@@ -227,22 +234,21 @@ namespace SyncChanges.Service
             if (string.IsNullOrWhiteSpace(user)) return null;
             user = user.Trim();
 
-            switch (user.ToLowerInvariant())
+            return user.ToLowerInvariant() switch
             {
-                case "localsystem": return null;
-                case "localservice": return @"NT AUTHORITY\LocalService";
-                case "networkservice": return @"NT AUTHORITY\NetworkService";
-            }
-
-            // a local account has to be given as .\UserName
-            return user.Contains('\\') || user.Contains('@') ? user : @".\" + user;
+                "localsystem" => null,
+                "localservice" => @"NT AUTHORITY\LocalService",
+                "networkservice" => @"NT AUTHORITY\NetworkService",
+                // a local account has to be given as .\UserName
+                _ => user.Contains('\\') || user.Contains('@') ? user : @".\" + user,
+            };
         }
 
         // The built-in and virtual service accounts, and group managed service accounts (DOMAIN\Name$), have no password.
         static bool NeedsPassword(string account) =>
             !account.StartsWith(@"NT AUTHORITY\", StringComparison.OrdinalIgnoreCase)
             && !account.StartsWith(@"NT SERVICE\", StringComparison.OrdinalIgnoreCase)
-            && !account.EndsWith("$", StringComparison.Ordinal);
+            && !account.EndsWith('$');
 
         static string ReadPassword(string account)
         {
@@ -283,33 +289,34 @@ namespace SyncChanges.Service
         const int ErrorServiceExists = 1073;
         const int ErrorInvalidServiceAccount = 1057;
 
-        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        // SERVICE_DESCRIPTIONW; Description points to a null-terminated UTF-16 string
+        [StructLayout(LayoutKind.Sequential)]
         struct ServiceDescription
         {
-            public string Description;
+            public IntPtr Description;
         }
 
-        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "OpenSCManagerW")]
-        static extern IntPtr OpenSCManager(string machineName, string databaseName, uint desiredAccess);
+        [LibraryImport("advapi32.dll", SetLastError = true, StringMarshalling = StringMarshalling.Utf16, EntryPoint = "OpenSCManagerW")]
+        private static partial IntPtr OpenSCManager(string machineName, string databaseName, uint desiredAccess);
 
-        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "CreateServiceW")]
-        static extern IntPtr CreateService(IntPtr manager, string serviceName, string displayName, uint desiredAccess,
+        [LibraryImport("advapi32.dll", SetLastError = true, StringMarshalling = StringMarshalling.Utf16, EntryPoint = "CreateServiceW")]
+        private static partial IntPtr CreateService(IntPtr manager, string serviceName, string displayName, uint desiredAccess,
             uint serviceType, uint startType, uint errorControl, string binaryPathName, string loadOrderGroup,
             IntPtr tagId, string dependencies, string serviceStartName, string password);
 
-        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "OpenServiceW")]
-        static extern IntPtr OpenService(IntPtr manager, string serviceName, uint desiredAccess);
+        [LibraryImport("advapi32.dll", SetLastError = true, StringMarshalling = StringMarshalling.Utf16, EntryPoint = "OpenServiceW")]
+        private static partial IntPtr OpenService(IntPtr manager, string serviceName, uint desiredAccess);
 
-        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "ChangeServiceConfig2W")]
+        [LibraryImport("advapi32.dll", SetLastError = true, EntryPoint = "ChangeServiceConfig2W")]
         [return: MarshalAs(UnmanagedType.Bool)]
-        static extern bool ChangeServiceConfig2(IntPtr service, uint infoLevel, ref ServiceDescription info);
+        private static partial bool ChangeServiceConfig2(IntPtr service, uint infoLevel, ref ServiceDescription info);
 
-        [DllImport("advapi32.dll", SetLastError = true)]
+        [LibraryImport("advapi32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
-        static extern bool DeleteService(IntPtr service);
+        private static partial bool DeleteService(IntPtr service);
 
-        [DllImport("advapi32.dll", SetLastError = true)]
+        [LibraryImport("advapi32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
-        static extern bool CloseServiceHandle(IntPtr handle);
+        private static partial bool CloseServiceHandle(IntPtr handle);
     }
 }

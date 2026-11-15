@@ -1,4 +1,4 @@
-using Humanizer;
+﻿using Humanizer;
 using Microsoft.Data.SqlClient;
 using NLog;
 using NPoco;
@@ -168,8 +168,8 @@ namespace SyncChanges
         {
             var parameter = new SqlParameter(name, value ?? DBNull.Value);
             var open = type.IndexOf('(');
-            var typeName = open < 0 ? type : type.Substring(0, open);
-            string[] typeArgs = open < 0 ? [] : type.Substring(open + 1, type.Length - open - 2).Split(',').Select(a => a.Trim()).ToArray();
+            var typeName = open < 0 ? type : type[..open];
+            string[] typeArgs = open < 0 ? [] : [.. type[(open + 1)..^1].Split(',').Select(a => a.Trim())];
             int Size() => typeArgs.Length > 0 && typeArgs[0] != "max" ? int.Parse(typeArgs[0]) : -1;
 
             switch (typeName)

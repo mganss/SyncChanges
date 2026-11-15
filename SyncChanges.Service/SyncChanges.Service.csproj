@@ -28,7 +28,9 @@
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
-	<LangVersion>preview</LangVersion>
+    <LangVersion>preview</LangVersion>
+    <!-- for the marshalling code LibraryImport generates -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <PropertyGroup Condition="'$(CI)' == 'True'">
     <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
