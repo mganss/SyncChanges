@@ -1141,6 +1141,285 @@ namespace SyncChanges.Tests
             }
         }
 
+        // creates the tables in both databases, with change tracking; constraints are created after all tables
+        static void CreateTables(string[] tables, params string[] constraints)
+        {
+            foreach (var dbName in new[] { SourceDatabaseName, DestinationDatabaseName })
+            {
+                using var db = GetDatabase(dbName);
+                foreach (var table in tables)
+                {
+                    db.Execute($"create table {table}");
+                    db.Execute($"alter table {table.Substring(0, table.IndexOf('(')).Trim()} enable CHANGE_TRACKING with (TRACK_COLUMNS_UPDATED = OFF)");
+                }
+                foreach (var constraint in constraints)
+                    db.Execute(constraint);
+            }
+        }
+
+        // drops the tables in both databases, in the given order
+        static void DropTables(params string[] tables)
+        {
+            foreach (var table in tables)
+                DropTable(table);
+        }
+
+        static void AssertSynced(Synchronizer synchronizer)
+        {
+            var (success, log) = SyncWithLog(synchronizer);
+            Assert.That(success, Is.True, () => string.Join(Environment.NewLine, log.Where(l => l.Contains("rror"))));
+        }
+
+        static void AssertSameRows(string sql)
+        {
+            using var source = GetDatabase(SourceDatabaseName);
+            using var destination = GetDatabase(DestinationDatabaseName);
+            var expected = source.Fetch<string>(sql);
+            Assert.That(expected, Is.Not.Empty);
+            Assert.That(destination.Fetch<string>(sql), Is.EqualTo(expected));
+        }
+
+        const string ParentTable = "A_Parent (Id int primary key not null, Name nvarchar(20) null)";
+        const string ChildTable = "B_Child (Id int primary key not null, ParentId int not null, Name nvarchar(20) null)";
+        const string ChildForeignKey = "alter table B_Child add constraint B_Child_ParentId_FK foreign key (ParentId) references A_Parent(Id)";
+
+        // the delete is moved after the changes of the rows that may reference it, without disabling a foreign key
+        static void AssertDeferredDelete(Config config)
+        {
+            var (success, log) = SyncWithLog(new Synchronizer(config));
+            Assert.That(success, Is.True, () => string.Join(Environment.NewLine, log.Where(l => l.Contains("rror"))));
+            Assert.That(log, Has.Some.Contains("Deferred 1 delete"));
+            Assert.That(log, Has.None.Contains("needs to be disabled"));
+        }
+
+        [Test]
+        public void DeleteReferencedRowInSameTransactionTest()
+        {
+            try
+            {
+                DropTables("B_Child", "A_Parent");
+                CreateTables([ParentTable, ChildTable], ChildForeignKey);
+                var config = ConfigForTables("A_Parent", "B_Child");
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                    db.Execute("insert into A_Parent values (1, N'one'), (2, N'two'); insert into B_Child values (1, 1, N'a'), (2, 2, N'b')");
+
+                AssertSynced(new Synchronizer(config));
+
+                // the parent's table sorts first, but the child has to be deleted first
+                using (var db = GetDatabase(SourceDatabaseName))
+                using (var transaction = db.GetTransaction())
+                {
+                    db.Execute("delete from B_Child where Id = 1");
+                    db.Execute("delete from A_Parent where Id = 1");
+                    transaction.Complete();
+                }
+
+                AssertDeferredDelete(config);
+                AssertSameRows("select concat(Id, '-', Name) from A_Parent order by Id");
+                AssertSameRows("select concat(Id, '-', ParentId, '-', Name) from B_Child order by Id");
+            }
+            finally
+            {
+                DropTables("B_Child", "A_Parent");
+            }
+        }
+
+        [Test]
+        public void DeleteReferencedRowThenUpdateReferencingRowTest()
+        {
+            try
+            {
+                DropTables("B_Child", "A_Parent");
+                CreateTables([ParentTable, ChildTable], ChildForeignKey);
+                var config = ConfigForTables("A_Parent", "B_Child");
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                    db.Execute("insert into A_Parent values (1, N'one'), (2, N'two'); insert into B_Child values (1, 1, N'a')");
+
+                AssertSynced(new Synchronizer(config));
+
+                // the child's change comes after the parent's delete, as it was updated again later
+                using (var db = GetDatabase(SourceDatabaseName))
+                {
+                    db.Execute("update B_Child set ParentId = 2 where Id = 1");
+                    db.Execute("delete from A_Parent where Id = 1");
+                    db.Execute("update B_Child set Name = N'a2' where Id = 1");
+                }
+
+                AssertDeferredDelete(config);
+                AssertSameRows("select concat(Id, '-', Name) from A_Parent order by Id");
+                AssertSameRows("select concat(Id, '-', ParentId, '-', Name) from B_Child order by Id");
+            }
+            finally
+            {
+                DropTables("B_Child", "A_Parent");
+            }
+        }
+
+        [Test]
+        public void DeleteReferencedRowWithUniqueValueReusedTest()
+        {
+            try
+            {
+                DropTables("B_Child", "A_Parent");
+                CreateTables([ParentTable, ChildTable], ChildForeignKey,
+                    "alter table A_Parent add constraint A_Parent_Name_UQ unique (Name)");
+                var config = ConfigForTables("A_Parent", "B_Child");
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                    db.Execute("insert into A_Parent values (1, N'one'), (2, N'two'); insert into B_Child values (1, 1, N'a')");
+
+                AssertSynced(new Synchronizer(config));
+
+                // moving the delete after the child's last update would put it after the insert that takes its name,
+                // so the foreign key is disabled instead
+                using (var db = GetDatabase(SourceDatabaseName))
+                {
+                    db.Execute("update B_Child set ParentId = 2 where Id = 1");
+                    db.Execute("delete from A_Parent where Id = 1");
+                    db.Execute("insert into A_Parent values (3, N'one')");
+                    db.Execute("update B_Child set Name = N'a2' where Id = 1");
+                }
+
+                var (success, log) = SyncWithLog(new Synchronizer(config));
+                Assert.That(success, Is.True, () => string.Join(Environment.NewLine, log.Where(l => l.Contains("rror"))));
+                Assert.That(log, Has.Some.Contains("B_Child_ParentId_FK needs to be disabled"));
+                AssertSameRows("select concat(Id, '-', Name) from A_Parent order by Id");
+                AssertSameRows("select concat(Id, '-', ParentId, '-', Name) from B_Child order by Id");
+            }
+            finally
+            {
+                DropTables("B_Child", "A_Parent");
+            }
+        }
+
+        [Test]
+        public void SyncedFailureTest()
+        {
+            try
+            {
+                CreateUsersTable();
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                    db.Insert(new User { Name = "Michael Jordan", Age = 54, DateOfBirth = new DateTime(1963, 2, 17), Savings = 1.31m * 1e9m });
+
+                var replicationSet = new ReplicationSet
+                {
+                    Name = "Test",
+                    Source = TestReplicationSet.Source,
+                    Destinations = { new DatabaseInfo { Name = "Error", ConnectionString = GetConnectionString("Error") } },
+                    Tables = ["Users"]
+                };
+
+                var synchronizer = new Synchronizer(new Config { ReplicationSets = { replicationSet } }) { Interval = 600 };
+                SyncEventArgs args = null;
+                var synced = new ManualResetEventSlim(false);
+                synchronizer.Synced += (s, e) => { args = e; synced.Set(); };
+                using var src = new CancellationTokenSource();
+                var t = Task.Factory.StartNew(() => synchronizer.SyncLoop(src.Token), TaskCreationOptions.LongRunning);
+
+                try
+                {
+                    Assert.That(synced.Wait(TimeSpan.FromSeconds(60)), Is.True);
+                }
+                finally
+                {
+                    src.Cancel();
+                    t.Wait(TimeSpan.FromSeconds(30));
+                }
+
+                Assert.That(args.Success, Is.False);
+            }
+            finally
+            {
+                DropTable("Users");
+            }
+        }
+
+        [Test]
+        public void CaseInsensitiveForeignKeyTest()
+        {
+            try
+            {
+                DropTables("B_Child", "A_Parent");
+                CreateTables(["A_Parent (Code nvarchar(10) primary key not null, Name nvarchar(20) null)",
+                    "B_Child (Id int primary key not null, Code nvarchar(10) not null)"],
+                    "alter table B_Child add constraint B_Child_Code_FK foreign key (Code) references A_Parent(Code)");
+                var config = ConfigForTables("A_Parent", "B_Child");
+
+                // the parent's insert comes after the child's, as the parent was updated later;
+                // the child references it in other case, which the case-insensitive collation matches
+                using (var db = GetDatabase(SourceDatabaseName))
+                {
+                    db.Execute("insert into A_Parent values (N'ABC', N'one')");
+                    db.Execute("insert into B_Child values (1, N'abc')");
+                    db.Execute("update A_Parent set Name = N'two'");
+                }
+
+                AssertSynced(new Synchronizer(config));
+                AssertSameRows("select concat(Code, '-', Name) from A_Parent order by Code");
+                AssertSameRows("select concat(Id, '-', Code) from B_Child order by Id");
+            }
+            finally
+            {
+                DropTables("B_Child", "A_Parent");
+            }
+        }
+
+        [Test]
+        public void IdentityNotKeyTest()
+        {
+            try
+            {
+                DropTables("Items");
+                CreateTables(["Items (Id uniqueidentifier primary key not null default newid(), Seq int identity(1,1) not null, Name nvarchar(20) null)"]);
+                var config = ConfigForTables("Items");
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                    db.Execute("insert into Items (Name) values (N'a'), (N'b')");
+
+                AssertSynced(new Synchronizer(config));
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                    db.Execute("update Items set Name = N'c' where Name = N'a'");
+
+                AssertSynced(new Synchronizer(config));
+                AssertSameRows("select concat(Id, '-', Seq, '-', Name) from Items order by Seq");
+            }
+            finally
+            {
+                DropTables("Items");
+            }
+        }
+
+        [Test]
+        public void TableNameCaseTest()
+        {
+            try
+            {
+                DropTables("Items");
+                CreateTables(["Items (Id int primary key not null, Name nvarchar(20) null)"]);
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                    db.Execute("insert into Items values (1, N'a')");
+
+                // SQL Server's names are not case-sensitive
+                AssertSynced(new Synchronizer(ConfigForTables("items")));
+                AssertSameRows("select concat(Id, '-', Name) from Items order by Id");
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                    db.Execute("insert into Items values (2, N'b')");
+
+                AssertSynced(new Synchronizer(ConfigForTables("DBO.ITEMS")));
+                AssertSameRows("select concat(Id, '-', Name) from Items order by Id");
+            }
+            finally
+            {
+                DropTables("Items");
+            }
+        }
+
         [Test]
         public void NullConfigTest()
         {

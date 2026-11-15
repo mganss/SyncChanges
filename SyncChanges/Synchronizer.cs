@@ -58,7 +58,9 @@ namespace SyncChanges
         public int BatchSize { get; set; } = config?.BatchSize ?? 100;
 
         /// <summary>
-        /// Occurs when synchronization from a synchronization loop has succeeded.
+        /// Occurs in a synchronization loop after a replication set has been replicated because the version of its source
+        /// has increased. <see cref="SyncEventArgs.Success"/> tells whether all of its destinations were replicated to;
+        /// otherwise, the replication set is replicated again in the next run.
         /// </summary>
         public event EventHandler<SyncEventArgs> Synced;
 
@@ -95,9 +97,7 @@ namespace SyncChanges
 
             var tables = GetTables(replicationSet.Source);
             if (replicationSet.Tables != null && replicationSet.Tables.Any())
-                tables = [.. tables.Select(t => new { Table = t, Name = t.Name.Replace("[", "").Replace("]", "") })
-                    .Where(t => replicationSet.Tables.Exists(r => r == t.Name || r == t.Name.Split('.')[1]))
-                    .Select(t => t.Table)];
+                tables = [.. tables.Where(t => replicationSet.Tables.Exists(r => IsNameOf(r, t)))];
 
             if (!tables.Any())
                 Log.Warn("No tables to replicate (check if change tracking is enabled)");
@@ -105,6 +105,20 @@ namespace SyncChanges
                 Log.Info($"Replicating {"table".ToQuantity(tables.Count, ShowQuantityAs.None)} {string.Join(", ", tables.Select(t => t.Name))}");
 
             Tables[index] = tables;
+        }
+
+        // Whether a table name from the configuration names the table, as SQL Server would resolve it: with or without
+        // its schema and brackets, and not case-sensitive (a case-sensitive server collation is not taken into account).
+        private static bool IsNameOf(string name, TableInfo table)
+        {
+            // the table's name is [schema].[table]
+            var separator = table.Name.IndexOf("].[", StringComparison.Ordinal);
+            var schemaName = table.Name.Substring(1, separator - 1);
+            var tableName = table.Name.Substring(separator + 3, table.Name.Length - separator - 4);
+            name = name.Trim();
+
+            return new[] { table.Name, $"{schemaName}.{tableName}", $"[{tableName}]", tableName }
+                .Any(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase));
         }
 
         /// <summary>
@@ -223,7 +237,7 @@ namespace SyncChanges
 
                             if (success) currentVersions[i] = version;
 
-                            Synced?.Invoke(this, new SyncEventArgs { ReplicationSet = replicationSet, Version = version });
+                            Synced?.Invoke(this, new SyncEventArgs { ReplicationSet = replicationSet, Version = version, Success = success });
                         }
                     }
                     catch (Exception) when (token.IsCancellationRequested)
@@ -308,6 +322,7 @@ namespace SyncChanges
                         KeyColumns = [.. g.Where(c => (int)c.PrimaryKey > 0).Select(c => (string)c.ColumnName)],
                         OtherColumns = [.. g.Where(c => (int)c.PrimaryKey == 0).Select(c => (string)c.ColumnName)],
                         HasIdentity = g.Any(c => (int)c.IsIdentity > 0),
+                        IdentityColumn = g.Where(c => (int)c.IsIdentity > 0).Select(c => (string)c.ColumnName).FirstOrDefault(),
                         ColumnTypes = g.ToDictionary(c => (string)c.ColumnName, c => (string)c.ColumnType)
                     }).ToList();
 
@@ -592,7 +607,7 @@ namespace SyncChanges
                     db.CompleteTransaction();
             }
 
-            changeInfo.Changes.AddRange(OrderForForeignKeys([.. changes.OrderBy(c => c.Version).ThenBy(c => c.Table.Name)]));
+            changeInfo.Changes.AddRange(OrderDeletesForForeignKeys(OrderForForeignKeys([.. changes.OrderBy(c => c.Version).ThenBy(c => c.Table.Name)])));
 
             return changeInfo;
         }
@@ -724,6 +739,109 @@ namespace SyncChanges
             return ordered;
         }
 
+        /// <summary>
+        /// Orders the changes so that a row is deleted after the rows that may reference it are deleted or changed.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A delete carries only the key of its row, as the row is gone from the source, so which rows referenced it
+        /// is not known. In the source, the rows that referenced it were deleted or updated before it was deleted, or in
+        /// the same transaction, but their changes may come after the delete: the changes of one version are ordered by
+        /// table, and a row that was updated again later comes in the order of its last update. So a delete of a row that
+        /// a table references is moved after the last update or delete of that table.
+        /// </para>
+        /// <para>
+        /// Where moving it may violate a constraint, the delete disables the foreign key constraints instead, which are
+        /// re-enabled once all changes are in: if the table has unique constraints and rows are inserted into it or
+        /// updated later (which may take the values that the deleted row holds until it is deleted), or if the row may
+        /// reference a row deleted later (which then has to be deleted after it).
+        /// </para>
+        /// </remarks>
+        private static List<Change> OrderDeletesForForeignKeys(List<Change> changes)
+        {
+            // by the name of a table: the foreign key constraints that reference it
+            var referencing = changes.Select(c => c.Table).Distinct()
+                .SelectMany(t => t.ForeignKeyConstraints)
+                .Distinct()
+                .ToLookup(f => f.ReferencedTableName);
+
+            if (!changes.Any(c => c.Operation == 'D' && referencing.Contains(c.Table.Name)))
+                return changes;
+
+            // by the name of a table: the position of its last update or delete, of its last delete, and of its last insert
+            // or update; a delete that has been moved counts at the position of the change it has been moved after
+            var lastUpdateOrDelete = new Dictionary<string, int>();
+            var lastDelete = new Dictionary<string, int>();
+            var lastInsertOrUpdate = new Dictionary<string, int>();
+
+            for (int i = 0; i < changes.Count; i++)
+            {
+                var name = changes[i].Table.Name;
+                if (changes[i].Operation != 'I') lastUpdateOrDelete[name] = i;
+                if (changes[i].Operation == 'D') lastDelete[name] = i;
+                if (changes[i].Operation != 'D') lastInsertOrUpdate[name] = i;
+            }
+
+            static int Last(Dictionary<string, int> positions, string table) => positions.TryGetValue(table, out var p) ? p : -1;
+
+            var movedAfter = new Dictionary<int, List<Change>>(); // by position: the deletes moved after the change there
+            var moved = new bool[changes.Count];
+            var deferred = 0;
+            var disabled = new Dictionary<ForeignKeyConstraint, int>();
+
+            // from the last change, so that the deletes after a delete are in their final place when it is moved
+            for (int p = changes.Count - 1; p >= 0; p--)
+            {
+                var change = changes[p];
+                var table = change.Table;
+                if (change.Operation != 'D' || !referencing.Contains(table.Name)) continue;
+
+                var foreignKeys = referencing[table.Name].Where(f => Last(lastUpdateOrDelete, f.TableName) > p).ToList();
+                if (foreignKeys.Count == 0) continue;
+
+                var safe = !(table.UniqueConstraints.Count > 0 && Last(lastInsertOrUpdate, table.Name) > p)
+                    && !table.ForeignKeyConstraints.Any(f => Last(lastDelete, f.ReferencedTableName) > p);
+
+                if (safe)
+                {
+                    var target = foreignKeys.Max(f => Last(lastUpdateOrDelete, f.TableName));
+                    if (!movedAfter.TryGetValue(target, out var deletes))
+                        movedAfter[target] = deletes = [];
+                    deletes.Add(change);
+                    moved[p] = true;
+                    lastUpdateOrDelete[table.Name] = Math.Max(Last(lastUpdateOrDelete, table.Name), target);
+                    lastDelete[table.Name] = Math.Max(Last(lastDelete, table.Name), target);
+                    deferred++;
+                    Log.Debug($"Deferring delete from {table.Name} (Version {change.Version}) until the rows of {string.Join(", ", foreignKeys.Select(f => f.TableName).Distinct())} that may reference it are changed");
+                }
+                else
+                {
+                    foreach (var fk in foreignKeys)
+                    {
+                        if (!change.ForeignKeyConstraintsToDisable.Add(fk)) continue;
+                        Log.Debug($"Foreign key constraint {fk.ForeignKeyName} needs to be disabled for delete from table {table.Name} (Version {change.Version})");
+                        disabled[fk] = disabled.TryGetValue(fk, out var count) ? count + 1 : 1;
+                    }
+                }
+            }
+
+            var ordered = new List<Change>(changes.Count);
+
+            for (int i = 0; i < changes.Count; i++)
+            {
+                if (!moved[i]) ordered.Add(changes[i]);
+                if (movedAfter.TryGetValue(i, out var deletes)) ordered.AddRange(deletes);
+            }
+
+            if (deferred > 0)
+                Log.Info($"Deferred {"delete".ToQuantity(deferred)} until the rows that may reference them are changed");
+
+            foreach (var fk in disabled)
+                Log.Info($"Foreign key constraint {fk.Key.ForeignKeyName} needs to be disabled for {"delete".ToQuantity(fk.Value)}");
+
+            return ordered;
+        }
+
         private static Dictionary<(string Table, string Column), Dictionary<object, List<int>>> BuildReferencedInsertIndex(List<Change> changes)
         {
             var referencedColumns = changes.Select(c => c.Table).Distinct()
@@ -744,7 +862,7 @@ namespace SyncChanges
                     if (refVal == null) continue;
 
                     if (!index.TryGetValue((change.Table.Name, column), out var insertsByValue))
-                        index[(change.Table.Name, column)] = insertsByValue = [];
+                        index[(change.Table.Name, column)] = insertsByValue = new(ValueComparer.Instance);
 
                     if (!insertsByValue.TryGetValue(refVal, out var positions))
                         insertsByValue[refVal] = positions = [];
@@ -781,20 +899,21 @@ namespace SyncChanges
 
                 // Update
                 case 'U':
-                    var updateColumnNames = change.Others.Keys.ToList();
-                    // a table with only key columns has nothing to update: a changed key is tracked as a delete and an insert
+                    // An identity column cannot be updated, nor can its value change in the source. A table with only key
+                    // columns has nothing to update: a changed key is tracked as a delete and an insert.
+                    var updateColumnNames = change.Others.Keys.Where(c => c != table.IdentityColumn).ToList();
                     if (updateColumnNames.Count == 0)
                     {
-                        Log.Debug($"Skipping update of {tableName}, which has no columns besides its key");
+                        Log.Debug($"Skipping update of {tableName}, which has no columns besides its key and identity");
                         break;
                     }
-                    var updateValues = change.GetValues();
+                    object[] updateValues = [.. change.Keys.Values, .. updateColumnNames.Select(c => change.Others[c])];
                     var updateSql = string.Format("update {0} set {1} where {2}", tableName,
                         string.Join(", ", updateColumnNames.Select((c, i) => $"{c} = @{i + change.Keys.Count}")),
                         PrimaryKeys(change));
                     if (Log.IsDebugEnabled)
                         Log.Debug($"Executing update: {updateSql} ({FormatArgs(updateValues)})");
-                    batch.Add(updateSql, ColumnTypes(table, change.GetColumnNames()), updateValues);
+                    batch.Add(updateSql, ColumnTypes(table, [.. change.Keys.Keys, .. updateColumnNames]), updateValues);
                     break;
 
                 // Delete

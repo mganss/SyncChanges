@@ -12,6 +12,11 @@ namespace SyncChanges
         public bool HasIdentity { get; set; }
 
         /// <summary>
+        /// Gets or sets the name of the identity column, or null if the table has none. Its value cannot be updated.
+        /// </summary>
+        public string IdentityColumn { get; set; }
+
+        /// <summary>
         /// Gets or sets the types of the columns, by column name, as they are declared as parameters (e.g. <c>nvarchar(200)</c>).
         /// </summary>
         public IDictionary<string, string> ColumnTypes { get; set; }

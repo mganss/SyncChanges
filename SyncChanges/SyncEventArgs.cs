@@ -20,5 +20,10 @@ namespace SyncChanges
         /// Gets or sets the new version.
         /// </summary>
         public long Version { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether all destinations of the replication set are now at <see cref="Version"/>.
+        /// </summary>
+        public bool Success { get; set; }
     }
 }
