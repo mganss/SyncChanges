@@ -85,7 +85,7 @@ jobs:
           /d:sonar.token="$SONAR_TOKEN"
           /d:sonar.cs.opencover.reportsPaths="${{ github.workspace }}/coverage.xml"
           /d:sonar.exclusions="**/*.xsd"
-          /d:sonar.coverage.exclusions="**/Program.cs"
+          /d:sonar.coverage.exclusions="**/Program.cs,**/SyncChanges.Service/**"
 
       - name: Build
         if: github.event_name != 'pull_request' && github.actor != 'dependabot[bot]'
