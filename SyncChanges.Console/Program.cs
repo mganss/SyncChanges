@@ -30,6 +30,7 @@ namespace SyncChanges.Console
             try
             {
                 System.Console.OutputEncoding = Encoding.UTF8;
+                ConfigureLogging();
                 var program = new Program();
                 var showHelp = false;
 
@@ -76,6 +77,22 @@ namespace SyncChanges.Console
             }
         }
 
+        // Installed as a dotnet tool, the executable's folder is in the tool store, where a log file would be hard to
+        // find, so the log goes to the user's local application data instead. An NLog.config in the current folder
+        // replaces the one of the executable.
+        static void ConfigureLogging()
+        {
+            var isTool = File.Exists(Path.Combine(AppContext.BaseDirectory, "DotnetToolSettings.xml"));
+            var logDirectory = isTool
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SyncChanges")
+                : AppContext.BaseDirectory;
+            GlobalDiagnosticsContext.Set("LogDirectory", logDirectory);
+
+            var localConfig = Path.Combine(Directory.GetCurrentDirectory(), "NLog.config");
+            if (File.Exists(localConfig) && !string.Equals(Path.GetFullPath(localConfig), Path.Combine(AppContext.BaseDirectory, "NLog.config"), StringComparison.OrdinalIgnoreCase))
+                LogManager.Configuration = new NLog.Config.XmlLoggingConfiguration(localConfig);
+        }
+
         static void ShowHelp(OptionSet p)
         {
             System.Console.WriteLine("Usage: SyncChanges [OPTION]... CONFIGFILE...");
@@ -83,6 +100,9 @@ namespace SyncChanges.Console
             System.Console.WriteLine();
             System.Console.WriteLine("Options:");
             p.WriteOptionDescriptions(System.Console.Out);
+            System.Console.WriteLine();
+            System.Console.WriteLine($"Logs to the console and to {Path.Combine(GlobalDiagnosticsContext.Get("LogDirectory"), "log.txt")};");
+            System.Console.WriteLine("an NLog.config in the current folder replaces the default logging configuration.");
         }
 
         void Sync()

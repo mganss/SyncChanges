@@ -13,6 +13,11 @@
     <Authors>Michael Ganss</Authors>
     <AssemblyName>SyncChanges.Console</AssemblyName>
     <PackageId>SyncChanges.Console</PackageId>
+    <!-- installed with dotnet tool install -g SyncChanges.Console, run as SyncChanges -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>SyncChanges</ToolCommandName>
+    <!-- also run on a later .NET runtime if .NET 10 is not installed -->
+    <RollForward>Major</RollForward>
     <PackageTags>replication synchronization sqlserver sql-server mirroring database</PackageTags>
     <PackageProjectUrl>https://github.com/mganss/SyncChanges</PackageProjectUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

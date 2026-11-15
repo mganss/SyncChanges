@@ -1,7 +1,8 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- not net10.0-windows, which a dotnet tool cannot target; the service only runs on Windows (SupportedOSPlatform) -->
+    <TargetFramework>net10.0</TargetFramework>
     <Description>Synchronize/Replicate database changes using SQL Server Change Tracking</Description>
     <Copyright>Copyright 2013-$([System.DateTime]::Now.Year) Michael Ganss</Copyright>
     <AssemblyTitle>SyncChanges.Service</AssemblyTitle>
@@ -13,6 +14,11 @@
     <Authors>Michael Ganss</Authors>
     <AssemblyName>SyncChanges.Service</AssemblyName>
     <PackageId>SyncChanges.Service</PackageId>
+    <!-- installed with dotnet tool install SyncChanges.Service, and from the zip of the release -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>SyncChanges.Service</ToolCommandName>
+    <!-- also run on a later .NET runtime if .NET 10 is not installed -->
+    <RollForward>Major</RollForward>
     <PackageTags>replication synchronization sqlserver sql-server mirroring database</PackageTags>
     <PackageProjectUrl>https://github.com/mganss/SyncChanges</PackageProjectUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
@@ -28,12 +34,18 @@
     <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Mono.Options" Version="6.12.0.148" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="NLog" Version="6.2.2" />
     <PackageReference Include="NLog.Schema" Version="6.2.2" />
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="11.0.100" PrivateAssets="All" />
     <PackageReference Include="System.Configuration.ConfigurationManager" Version="11.0.0" />
     <PackageReference Include="System.ServiceProcess.ServiceController" Version="11.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute">
+      <_Parameter1>windows</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\SyncChanges\SyncChanges.csproj" />

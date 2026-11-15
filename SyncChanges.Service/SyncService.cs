@@ -23,9 +23,11 @@ namespace SyncChanges.Service
         private Synchronizer Synchronizer;
         private CancellationTokenSource CancellationTokenSource;
         private Task SyncTask;
+        private readonly string ConfigFile;
 
-        public SyncChanges()
+        public SyncChanges(string configFile)
         {
+            ConfigFile = configFile;
             InitializeComponent();
         }
 
@@ -36,13 +38,12 @@ namespace SyncChanges.Service
 
             try
             {
-                var path = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-                config = JsonConvert.DeserializeObject<Config>(File.ReadAllText(Path.Combine(path, "config.json")));
+                config = JsonConvert.DeserializeObject<Config>(File.ReadAllText(ConfigFile));
             }
             catch (Exception ex)
             {
                 ExitCode = 1064;
-                Log.Error(ex, $"Error reading configuration file config.json");
+                Log.Error(ex, $"Error reading configuration file {ConfigFile}");
                 throw;
             }
 

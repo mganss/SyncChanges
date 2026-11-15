@@ -18,7 +18,15 @@ The use case SyncChanges was built for is a setup where you have a single databa
 Usage
 -----
 
-SyncChanges can be used either as a console application that is typically invoked through a task scheduler every couple of minutes, as a Windows service, or as a library in your own applications. If you want to use the service or console application just grab a zip from [releases](https://github.com/mganss/SyncChanges/releases).
+SyncChanges can be used either as a console application that is typically invoked through a task scheduler every couple of minutes, as a Windows service, or as a library in your own applications (NuGet package `SyncChanges`).
+
+The console application and the service are [.NET tools](https://learn.microsoft.com/en-us/dotnet/core/tools/global-tools), which need the .NET SDK to install. The console application then runs as `SyncChanges`:
+
+```
+dotnet tool install -g SyncChanges.Console
+```
+
+Alternatively, grab a zip of either from [releases](https://github.com/mganss/SyncChanges/releases), which needs only the .NET runtime. For installing the service, see [Service](#service).
 
 ```
 Usage: SyncChanges [OPTION]... CONFIGFILE...
@@ -135,30 +143,56 @@ Deletes have the opposite problem: a row has to be deleted after the rows that r
 Logging
 -------
 
-SyncChanges uses [NLog](https://github.com/NLog/NLog). If you're using the console application, you can customize the `NLog.config` to your needs. The default configuration logs to the console as well as a daily rolling file `log.txt` in the same folder as the executable and keeps a maximum of 10 archived log files.
+SyncChanges uses [NLog](https://github.com/NLog/NLog). The default configuration logs to the console as well as a daily rolling file `log.txt` and keeps a maximum of 10 archived log files. The log file is in the same folder as the executable, or, for the .NET tool, in a `SyncChanges` folder in the user's local application data (e.g. `C:\Users\UserName\AppData\Local\SyncChanges`; `SyncChanges --help` shows where). To customize logging of the console application, put an `NLog.config` in the folder you run it from, which then replaces the default one; for the zip, you can also edit the `NLog.config` next to the executable.
 
 Service
 -------
 
 In addition to the command line you can also run SyncChanges as a Windows service. The service periodically polls the value of [`CHANGE_TRACKING_CURRENT_VERSION`](https://docs.microsoft.com/en-us/sql/relational-databases/system-functions/change-tracking-current-version-transact-sql) in a configurable interval and starts replication if the version of the source has increased.
 
-The service runs on .NET 10 and needs its runtime installed. It expects a `config.json` configuration file in the same folder as the service executable. The desired polling interval, command timeout and batch size can be configured in `config.json` (see above), or in the `SyncChanges.Service.dll.config` file, which applies where `config.json` doesn't set them.
+The service runs on .NET 10 (or later) and needs its runtime installed. There are two ways to get it:
 
-To install the service, use `sc.exe` from an elevated command prompt, with the full path of the executable:
+- **As a .NET tool**, which needs the .NET SDK. Install it into a folder that the service's account can read, rather than with `-g` into your user profile:
+
+  ```
+  dotnet tool install SyncChanges.Service --tool-path C:\SyncChanges
+  ```
+
+  The service then reads its configuration from `%ProgramData%\SyncChanges\config.json` (e.g. `C:\ProgramData\SyncChanges\config.json`) and writes its log there, as the tool's own folder is replaced on each update. Installing the service puts a `config.example.json` there to start from.
+
+- **As a zip** from [releases](https://github.com/mganss/SyncChanges/releases), which needs only the runtime. Unzip it to a folder of its own, e.g. `C:\SyncChanges.Service`, and copy `config.example.json` to `config.json` there: the service reads its configuration from the folder of the executable, and writes its log there.
+
+The desired polling interval, command timeout and batch size can be configured in `config.json` (see above). For the zip, they can also be configured in the `SyncChanges.Service.dll.config` file, which applies where `config.json` doesn't set them. An `NLog.config` next to `config.json` replaces the default logging configuration. Note that `config.json` holds connection strings, so restrict access to its folder if they contain passwords.
+
+To install and start the service, run from an elevated command prompt, e.g. for the tool:
 
 ```
-sc.exe create SyncChangesService binPath= "C:\SyncChanges.Service\SyncChanges.Service.exe" start= auto obj= ".\UserName" password= "..."
+C:\SyncChanges\SyncChanges.Service.exe install --start
 ```
 
-`obj` is the user account the service will use; leave out `obj` and `password` to run it as LocalSystem. A local account has to be entered as `.\UserName`. The user has to have the necessary database permissions to carry out the replication process.
-
-To start the service:
+or for the zip:
 
 ```
-sc.exe start SyncChangesService
+C:\SyncChanges.Service\SyncChanges.Service.exe install --start
 ```
 
-Services installed with `InstallUtil.exe` by versions for the .NET Framework can be kept: stop the service, replace its files with the new ones, and start it again.
+By default, the service is named `SyncChangesService` and runs as LocalSystem. Options:
+
+- `--user=ACCOUNT`: the account the service runs as, e.g. `.\UserName` for a local account, `DOMAIN\UserName`, `NetworkService`, `NT SERVICE\SyncChangesService` (a virtual account) or a group managed service account `DOMAIN\Name$`. The account needs the database permissions to carry out the replication process, and a user account needs the "Log on as a service" right.
+- `--password=PASSWORD`: the account's password. If the account needs one and it is not given, you are asked for it, which keeps it out of the command history.
+- `--config=FILE`: the configuration file, instead of the default above; the log is then written to its folder. Together with `--name`, this lets you install several services, each with its own configuration.
+- `--name=NAME`: the name of the service.
+- `--start`: start the service once it is installed.
+
+To uninstall the service (it is stopped first if it is running):
+
+```
+C:\SyncChanges\SyncChanges.Service.exe uninstall
+```
+
+`sc.exe` works as well, e.g. `sc.exe start SyncChangesService` and `sc.exe stop SyncChangesService`.
+
+To upgrade, stop the service first, as its files are in use while it runs. For the tool, run `dotnet tool update SyncChanges.Service --tool-path C:\SyncChanges`; for the zip, replace its files except `config.json` and any changed `.config` files with the new ones. Then start the service again. Services installed with `sc.exe` or, by versions for the .NET Framework, with `InstallUtil.exe` can be upgraded with the zip this way, and keep reading `config.json` from the folder of the executable.
 
 Possible Improvements
 ----------------------------
