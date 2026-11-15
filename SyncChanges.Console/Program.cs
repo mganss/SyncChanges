@@ -21,6 +21,7 @@ namespace SyncChanges.Console
         int Timeout = 0;
         bool Loop = false;
         int Interval = 30;
+        int BatchSize = 100;
 
         static int Main(string[] args)
         {
@@ -38,6 +39,7 @@ namespace SyncChanges.Console
                         { "t|timeout=", "Database command timeout in seconds", (int v) => program.Timeout = v },
                         { "l|loop", "Perform replication in a loop, periodically checking for changes", v => program.Loop = v != null },
                         { "i|interval=", "Replication interval in seconds (default is 30); only relevant in loop mode", (int v) => program.Interval = v },
+                        { "b|batchsize=", "Maximum number of statements sent to a destination database in one command (default is 100)", (int v) => program.BatchSize = v },
                     };
 
                     program.ConfigFiles = options.Parse(args);
@@ -99,7 +101,7 @@ namespace SyncChanges.Console
 
                 try
                 {
-                    var synchronizer = new Synchronizer(config) { DryRun = DryRun, Timeout = Timeout };
+                    var synchronizer = new Synchronizer(config) { DryRun = DryRun, Timeout = Timeout, BatchSize = BatchSize };
                     if (!Loop)
                     {
                         var success = synchronizer.Sync();

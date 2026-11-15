@@ -244,6 +244,87 @@ namespace SyncChanges.Tests
             }
         }
 
+        [TestCase(1)]
+        [TestCase(7)]
+        [TestCase(100)]
+        [TestCase(1000)] // more parameters than fit in one command
+        public void BatchTest(int batchSize)
+        {
+            try
+            {
+                CreateUsersTable();
+                CreateOrdersTable();
+                CreateOrdersForeignKey(SourceDatabaseName);
+                CreateOrdersForeignKey(DestinationDatabaseName);
+
+                var sourceUsers = Enumerable.Range(1, 600).Select(i => new User
+                {
+                    Name = $"User {i}",
+                    Age = 20 + i % 50,
+                    DateOfBirth = new DateTime(1960, 1, 1).AddDays(i),
+                    Savings = i * 1000m
+                }).ToList();
+                var sourceOrders = new List<Order>();
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                {
+                    // one transaction, so users and the orders referencing them share a version
+                    db.BeginTransaction();
+                    foreach (var user in sourceUsers)
+                        db.Insert(user);
+                    for (int i = 0; i < sourceUsers.Count; i += 2)
+                    {
+                        var order = new Order { OrderId = i + 1, UserId = sourceUsers[i].UserId };
+                        db.Insert(order);
+                        sourceOrders.Add(order);
+                    }
+                    db.CompleteTransaction();
+                }
+
+                void AssertReplicated()
+                {
+                    var synchronizer = new Synchronizer(TestConfig) { BatchSize = batchSize };
+                    var success = synchronizer.Sync();
+
+                    Assert.That(success, Is.True);
+
+                    using var db = GetDatabase(DestinationDatabaseName);
+                    Assert.That(db.Fetch<User>("select * from Users"), Is.EquivalentTo(sourceUsers));
+                    Assert.That(db.Fetch<Order>("select * from Orders"), Is.EquivalentTo(sourceOrders));
+                }
+
+                AssertReplicated();
+
+                using (var db = GetDatabase(SourceDatabaseName))
+                {
+                    foreach (var user in sourceUsers.Where((u, i) => i % 3 == 0))
+                    {
+                        user.Savings += 1;
+                        db.Update(user);
+                    }
+
+                    foreach (var order in sourceOrders.Where((o, i) => i % 4 == 0).ToList())
+                    {
+                        db.Delete(order);
+                        sourceOrders.Remove(order);
+                    }
+
+                    foreach (var user in sourceUsers.Where((u, i) => i % 2 == 1).ToList()) // users without orders
+                    {
+                        db.Delete(user);
+                        sourceUsers.Remove(user);
+                    }
+                }
+
+                AssertReplicated();
+            }
+            finally
+            {
+                DropTable("Orders");
+                DropTable("Users");
+            }
+        }
+
         [Test]
         public void InsertTest()
         {

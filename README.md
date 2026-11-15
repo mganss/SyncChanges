@@ -33,6 +33,8 @@ Options:
                                checking for changes
   -i, --interval=VALUE       Replication interval in seconds (default is 30);
                                only relevant in loop mode
+  -b, --batchsize=VALUE      Maximum number of statements sent to a destination
+                               database in one command (default is 100)
 ```
 
 A configuration file looks like this:
@@ -115,7 +117,7 @@ Service
 
 In addition to the command line you can also run SyncChanges as a Windows service. The service periodically polls the value of [`CHANGE_TRACKING_CURRENT_VERSION`](https://docs.microsoft.com/en-us/sql/relational-databases/system-functions/change-tracking-current-version-transact-sql) in a configurable interval and starts replication if the version of the source has increased.
 
-The service expects a `config.json` configuration file in the same folder as the service executable. The desired polling interval can be configured in the `SyncChanges.Service.exe.config` file.
+The service expects a `config.json` configuration file in the same folder as the service executable. The desired polling interval, command timeout and batch size can be configured in the `SyncChanges.Service.exe.config` file.
 
 To install the service, use the [InstallUtil.exe](https://msdn.microsoft.com/en-us/library/50614e95%28v=vs.110%29.aspx) tool that comes with the .NET Framework installation:
 

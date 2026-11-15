@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Data.Common;
 using System.Linq;
+using System.Text;
 using System.Threading;
 
 namespace SyncChanges
@@ -42,6 +43,15 @@ namespace SyncChanges
         /// The synchronization time interval in seconds.
         /// </value>
         public int Interval { get; set; } = 30;
+
+        /// <summary>
+        /// Gets or sets the maximum number of statements sent to a destination database in one command. Default is 100.
+        /// Values less than 2 send each statement in its own command.
+        /// </summary>
+        /// <value>
+        /// The maximum number of statements per command.
+        /// </value>
+        public int BatchSize { get; set; } = 100;
 
         /// <summary>
         /// Occurs when synchronization from a synchronization loop has succeeded.
@@ -101,8 +111,7 @@ namespace SyncChanges
         {
             Error = false;
 
-            if (Timeout != 0)
-                Log.Info($"Command timeout is {"second".ToQuantity(Timeout)}");
+            LogSettings();
 
             Init();
 
@@ -144,8 +153,7 @@ namespace SyncChanges
         {
             var currentVersions = Enumerable.Repeat(0L, Config.ReplicationSets.Count).ToList();
 
-            if (Timeout != 0)
-                Log.Info($"Command timeout is {"second".ToQuantity(Timeout)}");
+            LogSettings();
 
             while (true)
             {
@@ -203,6 +211,14 @@ namespace SyncChanges
                 var delay = (int)Math.Round(Math.Max(0, (TimeSpan.FromSeconds(Interval) - (DateTime.UtcNow - start)).TotalSeconds) * 1000, MidpointRounding.AwayFromZero);
                 Thread.Sleep(delay);
             }
+        }
+
+        private void LogSettings()
+        {
+            if (Timeout != 0)
+                Log.Info($"Command timeout is {"second".ToQuantity(Timeout)}");
+
+            Log.Info($"Batch size is {"statement".ToQuantity(Math.Max(1, BatchSize))}");
         }
 
         private IList<TableInfo> GetTables(DatabaseInfo dbInfo)
@@ -331,11 +347,14 @@ namespace SyncChanges
                     {
                         var changes = changeInfo.Changes;
                         var disabledForeignKeyConstraints = new Dictionary<ForeignKeyConstraint, long>();
+                        var batch = new StatementBatch(db, BatchSize, DryRun);
 
                         for (int i = 0; i < changes.Count; i++)
                         {
                             var change = changes[i];
                             Log.Debug($"Replicating change #{i + 1} of {changes.Count} (Version {change.Version}, CreationVersion {change.CreationVersion})");
+
+                            batch.CurrentChange = i + 1;
 
                             foreach (var fk in change.ForeignKeyConstraintsToDisable)
                             {
@@ -347,22 +366,24 @@ namespace SyncChanges
                                 }
                                 else
                                 {
-                                    DisableForeignKeyConstraint(db, fk.Key);
+                                    DisableForeignKeyConstraint(batch, fk.Key);
                                     disabledForeignKeyConstraints[fk.Key] = fk.Value;
                                 }
                             }
 
-                            PerformChange(db, change);
+                            PerformChange(batch, change);
 
                             if ((i + 1) >= changes.Count || changes[i + 1].CreationVersion > change.CreationVersion) // there may be more than one change with the same CreationVersion
                             {
                                 foreach (var fk in disabledForeignKeyConstraints.Where(f => f.Value <= change.CreationVersion).Select(f => f.Key).ToList())
                                 {
-                                    ReenableForeignKeyConstraint(db, fk);
+                                    ReenableForeignKeyConstraint(batch, fk);
                                     disabledForeignKeyConstraints.Remove(fk);
                                 }
                             }
                         }
+
+                        batch.Flush();
 
                         if (!DryRun)
                         {
@@ -386,20 +407,82 @@ namespace SyncChanges
             }
         }
 
-        private void ReenableForeignKeyConstraint(Database db, ForeignKeyConstraint fk)
+        private static void ReenableForeignKeyConstraint(StatementBatch batch, ForeignKeyConstraint fk)
         {
             Log.Debug($"Re-enabling foreign key constraint {fk.ForeignKeyName}");
-            var sql = $"alter table {fk.TableName} with check check constraint [{fk.ForeignKeyName}]";
-            if (!DryRun)
-                db.Execute(sql);
+            batch.Add(_ => $"alter table {fk.TableName} with check check constraint [{fk.ForeignKeyName}]", []);
         }
 
-        private void DisableForeignKeyConstraint(Database db, ForeignKeyConstraint fk)
+        private static void DisableForeignKeyConstraint(StatementBatch batch, ForeignKeyConstraint fk)
         {
             Log.Debug($"Disabling foreign key constraint {fk.ForeignKeyName}");
-            var sql = $"alter table {fk.TableName} nocheck constraint [{fk.ForeignKeyName}]";
-            if (!DryRun)
-                db.Execute(sql);
+            batch.Add(_ => $"alter table {fk.TableName} nocheck constraint [{fk.ForeignKeyName}]", []);
+        }
+
+        /// <summary>
+        /// Collects statements and sends them to the database in as few commands as possible,
+        /// keeping their order. A command holds at most <c>batchSize</c> statements and
+        /// at most <see cref="MaxParameters"/> parameters (SQL Server allows 2100).
+        /// </summary>
+        private sealed class StatementBatch(Database db, int batchSize, bool dryRun)
+        {
+            const int MaxParameters = 2000;
+
+            private readonly StringBuilder Sql = new();
+            private readonly List<object> Args = [];
+            private int Statements;
+            private int FirstChange;
+            private int LastChange;
+
+            /// <summary>
+            /// Gets or sets the number (1-based) of the change whose statements are being added. Used for error messages.
+            /// </summary>
+            public int CurrentChange { get; set; }
+
+            /// <summary>
+            /// Adds a statement to the batch, sending the batch first if the statement would not fit.
+            /// </summary>
+            /// <param name="buildSql">Builds the statement's SQL, given the number of its first parameter (@n).</param>
+            /// <param name="args">The statement's parameter values.</param>
+            public void Add(Func<int, string> buildSql, object[] args)
+            {
+                if (Statements > 0 && (Statements >= batchSize || Args.Count + args.Length > MaxParameters))
+                    Flush();
+
+                if (Statements == 0)
+                    FirstChange = CurrentChange;
+
+                Sql.Append(buildSql(Args.Count)).AppendLine(";");
+                Args.AddRange(args);
+                Statements++;
+                LastChange = CurrentChange;
+            }
+
+            /// <summary>
+            /// Sends the statements collected so far.
+            /// </summary>
+            public void Flush()
+            {
+                if (Statements == 0) return;
+
+                try
+                {
+                    if (!dryRun)
+                        db.Execute(Sql.ToString(), [.. Args]);
+                }
+                catch
+                {
+                    var changes = FirstChange == LastChange ? $"change #{FirstChange}" : $"changes #{FirstChange} to #{LastChange}";
+                    Log.Error($"Error executing {"statement".ToQuantity(Statements)} for {changes}");
+                    throw;
+                }
+                finally
+                {
+                    Sql.Clear();
+                    Args.Clear();
+                    Statements = 0;
+                }
+            }
         }
 
         private void SetSyncVersion(Database db, long currentVersion)
@@ -526,103 +609,137 @@ namespace SyncChanges
         {
             var changes = changeInfo.Changes.OrderBy(c => c.CreationVersion).ThenBy(c => c.Version).ToList();
 
+            // For each referenced column of a foreign key: the positions in changes of inserts into the referenced table,
+            // by the value of the referenced column, in ascending order. Looking up the inserts that a change's foreign key
+            // value points to is then a dictionary lookup instead of a scan over all changes.
+            var referencedInserts = BuildReferencedInsertIndex(changes);
+
             for (int i = 0; i < changes.Count; i++)
             {
                 var change = changes[i];
-                if (change.CreationVersion < change.Version) // was inserted then later updated
-                {
-                    for (int j = i + 1; j < changes.Count; j++)
-                    {
-                        var intermediateChange = changes[j];
-                        if (intermediateChange.CreationVersion > change.Version) // created later than last update to change
-                            break;
-                        if (intermediateChange.Operation != 'I') continue;
 
-                        // let's look at intermediateChange if it collides with change
-                        foreach (var fk in change.Table.ForeignKeyConstraints.Where(f => f.ReferencedTableName == intermediateChange.Table.Name))
+                foreach (var fk in change.Table.ForeignKeyConstraints)
+                {
+                    var val = change.GetValue(fk.ColumnName);
+                    if (val == null
+                        || !referencedInserts.TryGetValue((fk.ReferencedTableName, fk.ReferencedColumnName), out var insertsByValue)
+                        || !insertsByValue.TryGetValue(val, out var positions))
+                        continue;
+
+                    if (change.CreationVersion < change.Version) // was inserted then later updated
+                    {
+                        foreach (var j in positions)
                         {
-                            var val = change.GetValue(fk.ColumnName);
-                            var refVal = intermediateChange.GetValue(fk.ReferencedColumnName);
-                            if (val != null && val.Equals(refVal))
+                            var insert = changes[j];
+                            if (j > i && insert.CreationVersion <= change.Version) // referenced row was inserted in between
                             {
                                 // this foreign key constraint needs to be disabled
-                                Log.Info($"Foreign key constraint {fk.ForeignKeyName} needs to be disabled for change #{i + 1} from version {change.CreationVersion} until version {intermediateChange.CreationVersion}");
-                                change.ForeignKeyConstraintsToDisable[fk] = intermediateChange.CreationVersion;
+                                Log.Info($"Foreign key constraint {fk.ForeignKeyName} needs to be disabled for change #{i + 1} from version {change.CreationVersion} until version {insert.CreationVersion}");
+                                change.ForeignKeyConstraintsToDisable[fk] = insert.CreationVersion;
                             }
                         }
                     }
-                }
 
-                var sameVersionChanges = changes.Where(c => c != change && c.CreationVersion == change.CreationVersion && c.Version == change.Version && c.Operation == 'I').ToList();
-
-                foreach (var sameVersionChange in sameVersionChanges)
-                {
-                    foreach (var fk in change.Table.ForeignKeyConstraints.Where(f => f.ReferencedTableName == sameVersionChange.Table.Name))
+                    foreach (var j in positions)
                     {
-                        var val = change.GetValue(fk.ColumnName);
-                        var refVal = sameVersionChange.GetValue(fk.ReferencedColumnName);
-                        if (val != null && val.Equals(refVal))
+                        var insert = changes[j];
+                        if (j != i && insert.CreationVersion == change.CreationVersion && insert.Version == change.Version) // referenced row was inserted in the same version
                         {
                             // this foreign key constraint needs to be disabled
                             Log.Info($"Foreign key constraint {fk.ForeignKeyName} needs to be disabled for change #{i + 1} for version {change.CreationVersion}");
-                            change.ForeignKeyConstraintsToDisable[fk] = sameVersionChange.CreationVersion;
+                            change.ForeignKeyConstraintsToDisable[fk] = insert.CreationVersion;
                         }
                     }
                 }
             }
         }
 
-        private void PerformChange(Database db, Change change)
+        private static Dictionary<(string Table, string Column), Dictionary<object, List<int>>> BuildReferencedInsertIndex(List<Change> changes)
+        {
+            var referencedColumns = changes.Select(c => c.Table).Distinct()
+                .SelectMany(t => t.ForeignKeyConstraints)
+                .Select(f => (Table: f.ReferencedTableName, Column: f.ReferencedColumnName))
+                .Distinct()
+                .ToLookup(c => c.Table, c => c.Column);
+            var index = new Dictionary<(string Table, string Column), Dictionary<object, List<int>>>();
+
+            for (int j = 0; j < changes.Count; j++)
+            {
+                var change = changes[j];
+                if (change.Operation != 'I') continue;
+
+                foreach (var column in referencedColumns[change.Table.Name])
+                {
+                    var refVal = change.GetValue(column);
+                    if (refVal == null) continue;
+
+                    if (!index.TryGetValue((change.Table.Name, column), out var insertsByValue))
+                        index[(change.Table.Name, column)] = insertsByValue = [];
+
+                    if (!insertsByValue.TryGetValue(refVal, out var positions))
+                        insertsByValue[refVal] = positions = [];
+
+                    positions.Add(j);
+                }
+            }
+
+            return index;
+        }
+
+        private static void PerformChange(StatementBatch batch, Change change)
         {
             var table = change.Table;
             var tableName = table.Name;
-            var operation = change.Operation;
 
-            switch (operation)
+            switch (change.Operation)
             {
                 // Insert
                 case 'I':
                     var insertColumnNames = change.GetColumnNames();
-                    var insertSql = string.Format("insert into {0} ({1}) values ({2})", tableName,
-                        string.Join(", ", insertColumnNames),
-                        string.Join(", ", Parameters(insertColumnNames.Count)));
                     var insertValues = change.GetValues();
-                    if (table.HasIdentity)
-                        insertSql = $"set IDENTITY_INSERT {tableName} ON; {insertSql}; set IDENTITY_INSERT {tableName} OFF";
-                    Log.Debug($"Executing insert: {insertSql} ({FormatArgs(insertValues)})");
-                    if (!DryRun)
-                        db.Execute(insertSql, insertValues);
+                    string InsertSql(int offset)
+                    {
+                        var sql = string.Format("insert into {0} ({1}) values ({2})", tableName,
+                            string.Join(", ", insertColumnNames),
+                            string.Join(", ", Parameters(offset, insertColumnNames.Count)));
+                        if (table.HasIdentity)
+                            sql = $"set IDENTITY_INSERT {tableName} ON; {sql}; set IDENTITY_INSERT {tableName} OFF";
+                        return sql;
+                    }
+                    if (Log.IsDebugEnabled)
+                        Log.Debug($"Executing insert: {InsertSql(0)} ({FormatArgs(insertValues)})");
+                    batch.Add(InsertSql, insertValues);
                     break;
 
                 // Update
                 case 'U':
                     var updateColumnNames = change.Others.Keys.ToList();
-                    var updateSql = string.Format("update {0} set {1} where {2}", tableName,
-                        string.Join(", ", updateColumnNames.Select((c, i) => $"{c} = @{i + change.Keys.Count}")),
-                        PrimaryKeys(change));
                     var updateValues = change.GetValues();
-                    Log.Debug($"Executing update: {updateSql} ({FormatArgs(updateValues)})");
-                    if (!DryRun)
-                        db.Execute(updateSql, updateValues);
+                    string UpdateSql(int offset) => string.Format("update {0} set {1} where {2}", tableName,
+                        string.Join(", ", updateColumnNames.Select((c, i) => $"{c} = @{offset + i + change.Keys.Count}")),
+                        PrimaryKeys(change, offset));
+                    if (Log.IsDebugEnabled)
+                        Log.Debug($"Executing update: {UpdateSql(0)} ({FormatArgs(updateValues)})");
+                    batch.Add(UpdateSql, updateValues);
                     break;
 
                 // Delete
                 case 'D':
-                    var deleteSql = string.Format("delete from {0} where {1}", tableName, PrimaryKeys(change));
                     var deleteValues = change.Keys.Values.ToArray();
-                    Log.Debug($"Executing delete: {deleteSql} ({FormatArgs(deleteValues)})");
-                    if (!DryRun)
-                        db.Execute(deleteSql, deleteValues);
+                    string DeleteSql(int offset) => string.Format("delete from {0} where {1}", tableName, PrimaryKeys(change, offset));
+                    if (Log.IsDebugEnabled)
+                        Log.Debug($"Executing delete: {DeleteSql(0)} ({FormatArgs(deleteValues)})");
+                    batch.Add(DeleteSql, deleteValues);
                     break;
             }
         }
 
         private static string FormatArgs(object[] args) => string.Join(", ", args.Select((a, i) => $"@{i} = {a}"));
 
-        private static string PrimaryKeys(Change change) =>
-            string.Join(" and ", change.Keys.Keys.Select((c, i) => $"{c} = @{i}"));
+        private static string PrimaryKeys(Change change, int offset) =>
+            string.Join(" and ", change.Keys.Keys.Select((c, i) => $"{c} = @{offset + i}"));
 
-        private static IEnumerable<string> Parameters(int n) => Enumerable.Range(0, n).Select(c => "@" + c);
+        private static IEnumerable<string> Parameters(int offset, int n) => Enumerable.Range(offset, n).Select(c => "@" + c);
 
         private long GetCurrentVersion(DatabaseInfo dbInfo)
         {

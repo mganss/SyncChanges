@@ -53,6 +53,9 @@ namespace SyncChanges.Service
 
                 CancellationTokenSource = new();
                 Synchronizer = new Synchronizer(config) { Timeout = timeout, Interval = interval, DryRun = dryRun };
+                var batchSize = ConfigurationManager.AppSettings["BatchSize"];
+                if (!string.IsNullOrEmpty(batchSize))
+                    Synchronizer.BatchSize = int.Parse(batchSize);
                 SyncTask = Task.Factory.StartNew(() => Synchronizer.SyncLoop(CancellationTokenSource.Token), TaskCreationOptions.LongRunning);
                 await SyncTask;
             }
