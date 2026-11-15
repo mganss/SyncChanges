@@ -44,7 +44,7 @@ namespace SyncChanges.Service
             {
                 ExitCode = 1064;
                 Log.Error(ex, $"Error reading configuration file {ConfigFile}");
-                throw;
+                throw new InvalidOperationException($"Error reading configuration file {ConfigFile}", ex);
             }
 
             try
@@ -65,8 +65,8 @@ namespace SyncChanges.Service
             catch (Exception ex)
             {
                 ExitCode = 1064;
-                Log.Error(ex, $"Error setting up synchronization");
-                throw;
+                Log.Error(ex, "Error setting up synchronization");
+                throw new InvalidOperationException("Error setting up synchronization", ex);
             }
 
             SyncTask = Task.Factory.StartNew(() => Synchronizer.SyncLoop(CancellationTokenSource.Token), TaskCreationOptions.LongRunning);
@@ -92,7 +92,7 @@ namespace SyncChanges.Service
             {
                 // cancelling stops the running command and rolls back its transaction, which can take a while;
                 // the service control manager gives up on a service that does not stop within its timeout
-                while (SyncTask != null && !SyncTask.Wait(TimeSpan.FromSeconds(10)))
+                while (SyncTask != null && !SyncTask.Wait(TimeSpan.FromSeconds(10), CancellationToken.None))
                     RequestAdditionalTime(15000);
             }
             catch (AggregateException)

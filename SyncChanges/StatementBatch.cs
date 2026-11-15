@@ -56,7 +56,7 @@ namespace SyncChanges
         /// </summary>
         public void Add(string sql)
         {
-            Reserve(0);
+            Reserve();
 #if NET8_0_OR_GREATER
             Commands.Add(new SqlBatchCommand(sql));
 #else
@@ -73,7 +73,7 @@ namespace SyncChanges
         public void Add(string sql, IList<string> types, object[] args)
         {
 #if NET8_0_OR_GREATER
-            Reserve(args.Length);
+            Reserve();
             var command = new SqlBatchCommand(sql);
             for (int i = 0; i < args.Length; i++)
                 command.Parameters.Add(CreateParameter("@" + i, types[i], args[i]));
@@ -81,7 +81,7 @@ namespace SyncChanges
 #else
             var declarations = string.Join(", ", types.Select((t, i) => $"@{i} {t}"));
             var newTexts = (TextParameters.ContainsKey(sql) ? 0 : 1) + (TextParameters.ContainsKey(declarations) ? 0 : 1);
-            Reserve(args.Length + newTexts);
+            Reserve(Args.Count + args.Length + newTexts > MaxParameters);
 
             var sqlParameter = TextParameter(sql);
             var declarationsParameter = TextParameter(declarations);
@@ -96,15 +96,10 @@ namespace SyncChanges
 #endif
         }
 
-        // Makes room for a statement with the given number of new parameters, sending the batch first if needed.
-        private void Reserve(int parameters)
+        // Makes room for a statement, sending the batch first if it is full or would hold too many parameters with it.
+        private void Reserve(bool tooManyParameters = false)
         {
-#if NET8_0_OR_GREATER
-            var full = Statements >= batchSize;
-#else
-            var full = Statements >= batchSize || Args.Count + parameters > MaxParameters;
-#endif
-            if (Statements > 0 && full)
+            if (Statements > 0 && (Statements >= batchSize || tooManyParameters))
                 Flush();
 
             if (Statements == 0)

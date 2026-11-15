@@ -20,6 +20,8 @@ namespace SyncChanges
     /// <exception cref="System.ArgumentException"><paramref name="config"/> is null</exception>
     public class Synchronizer(Config config)
     {
+        const string ChangeWord = "change";
+
         /// <summary>
         /// Gets or sets a value indicating whether a replication run only tests, without modifying destination databases.
         /// Default is the configuration's <see cref="Config.DryRun"/>, or <c>false</c>.
@@ -246,11 +248,12 @@ namespace SyncChanges
                             Synced?.Invoke(this, new SyncEventArgs { ReplicationSet = replicationSet, Version = version, Success = success });
                         }
                     }
-                    catch (Exception) when (token.IsCancellationRequested)
+                    catch (Exception ex) when (token.IsCancellationRequested)
                     {
                         // a cancelled command fails with the error of the database client, the changes to the
                         // destination are rolled back
                         Log.Info($"Cancelled replication of set {replicationSet.Name}.");
+                        Log.Debug(ex, "Error of the cancelled replication");
                     }
                     catch (Exception ex)
                     {
@@ -282,122 +285,114 @@ namespace SyncChanges
 
         private List<TableInfo> GetTables(DatabaseInfo dbInfo)
         {
-            try
-            {
-                using var db = GetDatabase(dbInfo.ConnectionString, DatabaseType.SqlServer2008);
-                // ColumnType is the column's type as a parameter declaration of sp_executesql, e.g. nvarchar(200)
-                var sql = @"select TableName, ColumnName, coalesce(max(cast(is_primary_key as tinyint)), 0) PrimaryKey,
-                        coalesce(max(cast(is_identity as tinyint)), 0) IsIdentity, max(ColumnType) ColumnType from
-                        (
-                        select (quotename(s.name) + '.' + quotename(t.name)) TableName, quotename(a.name) ColumnName,
-                        i.is_primary_key, a.is_identity,
-                        case
-                            when ty.name in ('varchar', 'char', 'varbinary', 'binary')
-                                then ty.name + '(' + case when a.max_length = -1 then 'max' else cast(a.max_length as varchar(10)) end + ')'
-                            when ty.name in ('nvarchar', 'nchar')
-                                then ty.name + '(' + case when a.max_length = -1 then 'max' else cast(a.max_length / 2 as varchar(10)) end + ')'
-                            when ty.name in ('decimal', 'numeric')
-                                then ty.name + '(' + cast(a.precision as varchar(10)) + ', ' + cast(a.scale as varchar(10)) + ')'
-                            when ty.name in ('datetime2', 'time', 'datetimeoffset')
-                                then ty.name + '(' + cast(a.scale as varchar(10)) + ')'
-                            when ty.name = 'text' then 'varchar(max)'
-                            when ty.name = 'ntext' then 'nvarchar(max)'
-                            when ty.name = 'image' then 'varbinary(max)'
-                            else ty.name
-                        end ColumnType
-                        from sys.change_tracking_tables tr
-                        join sys.tables t on t.object_id = tr.object_id
-                        join sys.schemas s on s.schema_id = t.schema_id
-                        join sys.columns a on a.object_id = t.object_id
-                        join sys.types ty on ty.user_type_id = case when a.system_type_id = 240 then a.user_type_id else a.system_type_id end
-                        left join sys.index_columns c on c.object_id = t.object_id and c.column_id = a.column_id
-                        left join sys.indexes i on i.object_id = t.object_id and i.index_id = c.index_id
-                        -- the destination generates the values of these columns itself and refuses explicit ones:
-                        -- rowversion (timestamp), and GENERATED ALWAYS columns such as the period columns of temporal tables
-                        -- (the property is null before SQL Server 2016, which has no such columns)
-                        where a.is_computed = 0 and a.system_type_id <> 189
-                            and coalesce(columnproperty(a.object_id, a.name, 'GeneratedAlwaysType'), 0) = 0
-                        ) X
-                        group by TableName, ColumnName
-                        order by TableName, ColumnName";
+            using var db = GetDatabase(dbInfo.ConnectionString, DatabaseType.SqlServer2008);
+            // ColumnType is the column's type as a parameter declaration of sp_executesql, e.g. nvarchar(200)
+            var sql = @"select TableName, ColumnName, coalesce(max(cast(is_primary_key as tinyint)), 0) PrimaryKey,
+                    coalesce(max(cast(is_identity as tinyint)), 0) IsIdentity, max(ColumnType) ColumnType from
+                    (
+                    select (quotename(s.name) + '.' + quotename(t.name)) TableName, quotename(a.name) ColumnName,
+                    i.is_primary_key, a.is_identity,
+                    case
+                        when ty.name in ('varchar', 'char', 'varbinary', 'binary')
+                            then ty.name + '(' + case when a.max_length = -1 then 'max' else cast(a.max_length as varchar(10)) end + ')'
+                        when ty.name in ('nvarchar', 'nchar')
+                            then ty.name + '(' + case when a.max_length = -1 then 'max' else cast(a.max_length / 2 as varchar(10)) end + ')'
+                        when ty.name in ('decimal', 'numeric')
+                            then ty.name + '(' + cast(a.precision as varchar(10)) + ', ' + cast(a.scale as varchar(10)) + ')'
+                        when ty.name in ('datetime2', 'time', 'datetimeoffset')
+                            then ty.name + '(' + cast(a.scale as varchar(10)) + ')'
+                        when ty.name = 'text' then 'varchar(max)'
+                        when ty.name = 'ntext' then 'nvarchar(max)'
+                        when ty.name = 'image' then 'varbinary(max)'
+                        else ty.name
+                    end ColumnType
+                    from sys.change_tracking_tables tr
+                    join sys.tables t on t.object_id = tr.object_id
+                    join sys.schemas s on s.schema_id = t.schema_id
+                    join sys.columns a on a.object_id = t.object_id
+                    join sys.types ty on ty.user_type_id = case when a.system_type_id = 240 then a.user_type_id else a.system_type_id end
+                    left join sys.index_columns c on c.object_id = t.object_id and c.column_id = a.column_id
+                    left join sys.indexes i on i.object_id = t.object_id and i.index_id = c.index_id
+                    -- the destination generates the values of these columns itself and refuses explicit ones:
+                    -- rowversion (timestamp), and GENERATED ALWAYS columns such as the period columns of temporal tables
+                    -- (the property is null before SQL Server 2016, which has no such columns)
+                    where a.is_computed = 0 and a.system_type_id <> 189
+                        and coalesce(columnproperty(a.object_id, a.name, 'GeneratedAlwaysType'), 0) = 0
+                    ) X
+                    group by TableName, ColumnName
+                    order by TableName, ColumnName";
 
-                var tables = db.Fetch<dynamic>(sql).GroupBy(t => t.TableName)
-                    .Select(g => new TableInfo
-                    {
-                        Name = (string)g.Key,
-                        KeyColumns = [.. g.Where(c => (int)c.PrimaryKey > 0).Select(c => (string)c.ColumnName)],
-                        OtherColumns = [.. g.Where(c => (int)c.PrimaryKey == 0).Select(c => (string)c.ColumnName)],
-                        HasIdentity = g.Any(c => (int)c.IsIdentity > 0),
-                        IdentityColumn = g.Where(c => (int)c.IsIdentity > 0).Select(c => (string)c.ColumnName).FirstOrDefault(),
-                        ColumnTypes = g.ToDictionary(c => (string)c.ColumnName, c => (string)c.ColumnType)
-                    }).ToList();
-
-                var fks = db.Fetch<ForeignKeyConstraint>(@"select obj.name AS ForeignKeyName,
-                            (quotename(sch.name) + '.' + quotename(tab1.name)) TableName,
-                            quotename(col1.name) ColumnName,
-                            (quotename(sch2.name) + '.' + quotename(tab2.name)) ReferencedTableName,
-                            quotename(col2.name) ReferencedColumnName
-                        from sys.foreign_key_columns fkc
-                        inner join sys.foreign_keys obj
-                            on obj.object_id = fkc.constraint_object_id
-                        inner join sys.tables tab1
-                            on tab1.object_id = fkc.parent_object_id
-                        inner join sys.schemas sch
-                            on tab1.schema_id = sch.schema_id
-                        inner join sys.columns col1
-                            on col1.column_id = parent_column_id AND col1.object_id = tab1.object_id
-                        inner join sys.tables tab2
-                            on tab2.object_id = fkc.referenced_object_id
-                        inner join sys.schemas sch2
-                            on tab2.schema_id = sch2.schema_id
-                        inner join sys.columns col2
-                            on col2.column_id = referenced_column_id AND col2.object_id = tab2.object_id
-                        where obj.is_disabled = 0");
-
-                foreach (var table in tables)
-                    table.ForeignKeyConstraints = [.. fks.Where(f => f.TableName == table.Name)];
-
-                var uqcs = db.Fetch<UniqueColumn>(@"SELECT
-                             TableName = (quotename(sch.name) + '.' + quotename(t.name)),
-                             IndexName = ind.name,
-                             ColumnName = quotename(col.name),
-                             IsConstraint = is_unique_constraint
-                        FROM
-                             sys.indexes ind
-                        INNER JOIN
-                             sys.index_columns ic ON  ind.object_id = ic.object_id and ind.index_id = ic.index_id
-                        INNER JOIN
-                             sys.columns col ON ic.object_id = col.object_id and ic.column_id = col.column_id
-                        INNER JOIN
-                             sys.tables t ON ind.object_id = t.object_id
-                        inner join sys.schemas sch
-                            on t.schema_id = sch.schema_id
-                        WHERE
-                             ind.is_primary_key = 0
-                             AND ic.is_included_column = 0
-                             AND (ind.is_unique = 1 or ind.is_unique_constraint = 1)
-                             AND t.is_ms_shipped = 0
-                        ORDER BY
-                             t.name, ind.name, ind.index_id, ic.key_ordinal;");
-
-                var uqs = uqcs.GroupBy(c => $"{c.TableName}_{c.IndexName}").Select(g => new UniqueConstraint
+            var tables = db.Fetch<dynamic>(sql).GroupBy(t => t.TableName)
+                .Select(g => new TableInfo
                 {
-                    IndexName = g.First().IndexName,
-                    TableName = g.First().TableName,
-                    IsConstraint = g.First().IsConstraint,
-                    ColumnNames = [.. g.Select(c => c.ColumnName)],
+                    Name = (string)g.Key,
+                    KeyColumns = [.. g.Where(c => (int)c.PrimaryKey > 0).Select(c => (string)c.ColumnName)],
+                    OtherColumns = [.. g.Where(c => (int)c.PrimaryKey == 0).Select(c => (string)c.ColumnName)],
+                    HasIdentity = g.Any(c => (int)c.IsIdentity > 0),
+                    IdentityColumn = g.Where(c => (int)c.IsIdentity > 0).Select(c => (string)c.ColumnName).FirstOrDefault(),
+                    ColumnTypes = g.ToDictionary(c => (string)c.ColumnName, c => (string)c.ColumnType)
                 }).ToList();
 
-                foreach (var table in tables)
-                    table.UniqueConstraints = [.. uqs.Where(u => u.TableName == table.Name)];
+            var fks = db.Fetch<ForeignKeyConstraint>(@"select obj.name AS ForeignKeyName,
+                        (quotename(sch.name) + '.' + quotename(tab1.name)) TableName,
+                        quotename(col1.name) ColumnName,
+                        (quotename(sch2.name) + '.' + quotename(tab2.name)) ReferencedTableName,
+                        quotename(col2.name) ReferencedColumnName
+                    from sys.foreign_key_columns fkc
+                    inner join sys.foreign_keys obj
+                        on obj.object_id = fkc.constraint_object_id
+                    inner join sys.tables tab1
+                        on tab1.object_id = fkc.parent_object_id
+                    inner join sys.schemas sch
+                        on tab1.schema_id = sch.schema_id
+                    inner join sys.columns col1
+                        on col1.column_id = parent_column_id AND col1.object_id = tab1.object_id
+                    inner join sys.tables tab2
+                        on tab2.object_id = fkc.referenced_object_id
+                    inner join sys.schemas sch2
+                        on tab2.schema_id = sch2.schema_id
+                    inner join sys.columns col2
+                        on col2.column_id = referenced_column_id AND col2.object_id = tab2.object_id
+                    where obj.is_disabled = 0");
 
-                return tables;
-            }
-            catch (Exception ex) when (!Token.IsCancellationRequested)
+            foreach (var table in tables)
+                table.ForeignKeyConstraints = [.. fks.Where(f => f.TableName == table.Name)];
+
+            var uqcs = db.Fetch<UniqueColumn>(@"SELECT
+                         TableName = (quotename(sch.name) + '.' + quotename(t.name)),
+                         IndexName = ind.name,
+                         ColumnName = quotename(col.name),
+                         IsConstraint = is_unique_constraint
+                    FROM
+                         sys.indexes ind
+                    INNER JOIN
+                         sys.index_columns ic ON  ind.object_id = ic.object_id and ind.index_id = ic.index_id
+                    INNER JOIN
+                         sys.columns col ON ic.object_id = col.object_id and ic.column_id = col.column_id
+                    INNER JOIN
+                         sys.tables t ON ind.object_id = t.object_id
+                    inner join sys.schemas sch
+                        on t.schema_id = sch.schema_id
+                    WHERE
+                         ind.is_primary_key = 0
+                         AND ic.is_included_column = 0
+                         AND (ind.is_unique = 1 or ind.is_unique_constraint = 1)
+                         AND t.is_ms_shipped = 0
+                    ORDER BY
+                         t.name, ind.name, ind.index_id, ic.key_ordinal;");
+
+            var uqs = uqcs.GroupBy(c => $"{c.TableName}_{c.IndexName}").Select(g => new UniqueConstraint
             {
-                Log.Fatal(ex, "Error getting tables to replicate from source database");
-                throw;
-            }
+                IndexName = g.First().IndexName,
+                TableName = g.First().TableName,
+                IsConstraint = g.First().IsConstraint,
+                ColumnNames = [.. g.Select(c => c.ColumnName)],
+            }).ToList();
+
+            foreach (var table in tables)
+                table.UniqueConstraints = [.. uqs.Where(u => u.TableName == table.Name)];
+
+            return tables;
         }
 
         private CancellableDatabase GetDatabase(string connectionString, DatabaseType databaseType = null)
@@ -421,7 +416,7 @@ namespace SyncChanges
 
                 try
                 {
-                    Log.Info($"Replicating {"change".ToQuantity(changeInfo.Changes.Count)} to destination {destination.Name}");
+                    Log.Info($"Replicating {ChangeWord.ToQuantity(changeInfo.Changes.Count)} to destination {destination.Name}");
 
                     using var db = GetDatabase(destination.ConnectionString, DatabaseType.SqlServer2005);
                     using var transaction = db.GetTransaction();
@@ -438,19 +433,16 @@ namespace SyncChanges
 
                         batch.CurrentChange = i + 1;
 
-                        foreach (var fk in change.ForeignKeyConstraintsToDisable)
+                        foreach (var fk in change.ForeignKeyConstraintsToDisable.Where(f => !disabledForeignKeyConstraints.Contains(f)))
                         {
-                            if (!disabledForeignKeyConstraints.Contains(fk))
-                            {
-                                DisableForeignKeyConstraint(batch, fk);
-                                disabledForeignKeyConstraints.Add(fk);
-                            }
+                            DisableForeignKeyConstraint(batch, fk);
+                            disabledForeignKeyConstraints.Add(fk);
                         }
 
                         PerformChange(batch, change);
 
                         if (progress.Due(i + 1, out var report))
-                            Log.Info($"Replicated {i + 1} of {"change".ToQuantity(changes.Count)} to destination {destination.Name} {report}");
+                            Log.Info($"Replicated {i + 1} of {ChangeWord.ToQuantity(changes.Count)} to destination {destination.Name} {report}");
                     }
 
                     // Re-enabling checks the whole table, so it is done once, when all changes are in. The constraints
@@ -589,7 +581,7 @@ namespace SyncChanges
                         numChanges++;
                     }
 
-                    Log.Info($"Table {tableName} has {"change".ToQuantity(numChanges)}");
+                    Log.Info($"Table {tableName} has {ChangeWord.ToQuantity(numChanges)}");
                 }
 
                 if (snapshotIsolationEnabled)
@@ -631,11 +623,10 @@ namespace SyncChanges
             var ordered = new List<Change>(changes.Count);
             var waiting = new Dictionary<int, List<int>>(); // by the position of an insert: the deferred inserts waiting for it
             var released = new Queue<int>();
-            var deferred = new HashSet<int>();
-            var disabled = new Dictionary<ForeignKeyConstraint, int>();
+            var deferred = new bool[changes.Count];
 
             // The positions of the inserts of the row that the change at position i references through fk,
-            // if none of them has been replicated yet, otherwise null.
+            // if none of them has been replicated yet, otherwise none.
             List<int> PendingInserts(int i, ForeignKeyConstraint fk)
             {
                 var val = changes[i].GetValue(fk.ColumnName);
@@ -643,7 +634,7 @@ namespace SyncChanges
                     || !referencedInserts.TryGetValue((fk.ReferencedTableName, fk.ReferencedColumnName), out var insertsByValue)
                     || !insertsByValue.TryGetValue(val, out var positions)
                     || positions.Any(j => j == i || done[j])) // a row may reference itself
-                    return null;
+                    return [];
                 return positions;
             }
 
@@ -664,11 +655,10 @@ namespace SyncChanges
             {
                 var change = changes[i];
 
-                foreach (var fk in change.Table.ForeignKeyConstraints.Where(f => PendingInserts(i, f) != null))
+                foreach (var fk in change.Table.ForeignKeyConstraints.Where(f => PendingInserts(i, f).Count > 0))
                 {
-                    if (!change.ForeignKeyConstraintsToDisable.Add(fk)) continue;
-                    Log.Debug($"Foreign key constraint {fk.ForeignKeyName} needs to be disabled for change of table {change.Table.Name} (Version {change.Version}, CreationVersion {change.CreationVersion})");
-                    disabled[fk] = disabled.TryGetValue(fk, out var count) ? count + 1 : 1;
+                    if (change.ForeignKeyConstraintsToDisable.Add(fk))
+                        Log.Debug($"Foreign key constraint {fk.ForeignKeyName} needs to be disabled for change of table {change.Table.Name} (Version {change.Version}, CreationVersion {change.CreationVersion})");
                 }
 
                 Add(i);
@@ -681,7 +671,7 @@ namespace SyncChanges
                 var change = changes[i];
                 var (foreignKey, positions) = change.Table.ForeignKeyConstraints
                     .Select(f => (ForeignKey: f, Positions: PendingInserts(i, f)))
-                    .FirstOrDefault(p => p.Positions != null);
+                    .FirstOrDefault(p => p.Positions.Count > 0);
 
                 if (positions == null)
                     Add(i);
@@ -693,7 +683,7 @@ namespace SyncChanges
                     if (!waiting.TryGetValue(position, out var waiters))
                         waiting[position] = waiters = [];
                     waiters.Add(i);
-                    deferred.Add(i);
+                    deferred[i] = true;
                 }
                 else
                     AddDisablingForeignKeys(i);
@@ -719,11 +709,13 @@ namespace SyncChanges
                 ScheduleReleased();
             }
 
-            if (deferred.Count > 0)
-                Log.Info($"Deferred {"insert".ToQuantity(deferred.Count)} until the rows they reference are inserted");
+            var numDeferred = deferred.Count(d => d);
+            if (numDeferred > 0)
+                Log.Info($"Deferred {"insert".ToQuantity(numDeferred)} until the rows they reference are inserted");
 
-            foreach (var fk in disabled)
-                Log.Info($"Foreign key constraint {fk.Key.ForeignKeyName} needs to be disabled for {"change".ToQuantity(fk.Value)}");
+            // the changes are new, so the constraints they disable are those disabled here
+            foreach (var fk in ordered.SelectMany(c => c.ForeignKeyConstraintsToDisable).GroupBy(f => f))
+                Log.Info($"Foreign key constraint {fk.Key.ForeignKeyName} needs to be disabled for {ChangeWord.ToQuantity(fk.Count())}");
 
             return ordered;
         }

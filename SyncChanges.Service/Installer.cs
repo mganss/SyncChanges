@@ -134,14 +134,14 @@ namespace SyncChanges.Service
 
                 try
                 {
-                    var description = new ServiceDescription { Description = Marshal.StringToHGlobalUni(Description) };
+                    var description = new ServiceDescription { Text = Marshal.StringToHGlobalUni(Description) };
                     try
                     {
                         ChangeServiceConfig2(service, ServiceConfigDescription, ref description);
                     }
                     finally
                     {
-                        Marshal.FreeHGlobal(description.Description);
+                        Marshal.FreeHGlobal(description.Text);
                     }
                 }
                 finally
@@ -289,11 +289,11 @@ namespace SyncChanges.Service
         const int ErrorServiceExists = 1073;
         const int ErrorInvalidServiceAccount = 1057;
 
-        // SERVICE_DESCRIPTIONW; Description points to a null-terminated UTF-16 string
+        // SERVICE_DESCRIPTIONW; Text (lpDescription) points to a null-terminated UTF-16 string
         [StructLayout(LayoutKind.Sequential)]
         struct ServiceDescription
         {
-            public IntPtr Description;
+            public IntPtr Text;
         }
 
         [LibraryImport("advapi32.dll", SetLastError = true, StringMarshalling = StringMarshalling.Utf16, EntryPoint = "OpenSCManagerW")]
