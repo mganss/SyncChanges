@@ -111,15 +111,21 @@ namespace SyncChanges
         // its schema and brackets, and not case-sensitive (a case-sensitive server collation is not taken into account).
         private static bool IsNameOf(string name, TableInfo table)
         {
-            // the table's name is [schema].[table]
-            var separator = table.Name.IndexOf("].[", StringComparison.Ordinal);
-            var schemaName = table.Name.Substring(1, separator - 1);
-            var tableName = table.Name.Substring(separator + 3, table.Name.Length - separator - 4);
+            // the table's name is [schema].[table], where a ] in a name is doubled; the schema's part is followed by the
+            // first ] that is not doubled
+            var separator = 1;
+            while (table.Name[separator] != ']' || table.Name[separator + 1] == ']')
+                separator += table.Name[separator] == ']' ? 2 : 1;
+            var schemaName = table.Name.Substring(1, separator - 1).Replace("]]", "]");
+            var tableName = table.Name.Substring(separator + 3, table.Name.Length - separator - 4).Replace("]]", "]");
             name = name.Trim();
 
-            return new[] { table.Name, $"{schemaName}.{tableName}", $"[{tableName}]", tableName }
+            return new[] { table.Name, $"{schemaName}.{tableName}", QuoteName(tableName), tableName }
                 .Any(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase));
         }
+
+        // Delimits a name like T-SQL's QUOTENAME.
+        private static string QuoteName(string name) => $"[{name.Replace("]", "]]")}]";
 
         /// <summary>
         /// Perform the synchronization.
@@ -283,7 +289,7 @@ namespace SyncChanges
                 var sql = @"select TableName, ColumnName, coalesce(max(cast(is_primary_key as tinyint)), 0) PrimaryKey,
                         coalesce(max(cast(is_identity as tinyint)), 0) IsIdentity, max(ColumnType) ColumnType from
                         (
-                        select ('[' + s.name + '].[' + t.name + ']') TableName, ('[' + COL_NAME(t.object_id, a.column_id) + ']') ColumnName,
+                        select (quotename(s.name) + '.' + quotename(t.name)) TableName, quotename(a.name) ColumnName,
                         i.is_primary_key, a.is_identity,
                         case
                             when ty.name in ('varchar', 'char', 'varbinary', 'binary')
@@ -327,10 +333,10 @@ namespace SyncChanges
                     }).ToList();
 
                 var fks = db.Fetch<ForeignKeyConstraint>(@"select obj.name AS ForeignKeyName,
-                            ('[' + sch.name + '].[' + tab1.name + ']') TableName,
-                            ('[' +  col1.name + ']') ColumnName,
-                            ('[' + sch2.name + '].[' + tab2.name + ']') ReferencedTableName,
-                            ('[' +  col2.name + ']') ReferencedColumnName
+                            (quotename(sch.name) + '.' + quotename(tab1.name)) TableName,
+                            quotename(col1.name) ColumnName,
+                            (quotename(sch2.name) + '.' + quotename(tab2.name)) ReferencedTableName,
+                            quotename(col2.name) ReferencedColumnName
                         from sys.foreign_key_columns fkc
                         inner join sys.foreign_keys obj
                             on obj.object_id = fkc.constraint_object_id
@@ -352,10 +358,9 @@ namespace SyncChanges
                     table.ForeignKeyConstraints = [.. fks.Where(f => f.TableName == table.Name)];
 
                 var uqcs = db.Fetch<UniqueColumn>(@"SELECT
-                             IndexId = ('[' + sch.name + '].[' + t.name + '].[' + ind.name + ']'),
-                             TableName = ('[' + sch.name + '].[' + t.name + ']'),
+                             TableName = (quotename(sch.name) + '.' + quotename(t.name)),
                              IndexName = ind.name,
-                             ColumnName = ('[' +  col.name + ']'),
+                             ColumnName = quotename(col.name),
                              IsConstraint = is_unique_constraint
                         FROM
                              sys.indexes ind
@@ -369,10 +374,11 @@ namespace SyncChanges
                             on t.schema_id = sch.schema_id
                         WHERE
                              ind.is_primary_key = 0
+                             AND ic.is_included_column = 0
                              AND (ind.is_unique = 1 or ind.is_unique_constraint = 1)
                              AND t.is_ms_shipped = 0
                         ORDER BY
-                             t.name, ind.name, ind.index_id, ic.is_included_column, ic.key_ordinal;");
+                             t.name, ind.name, ind.index_id, ic.key_ordinal;");
 
                 var uqs = uqcs.GroupBy(c => $"{c.TableName}_{c.IndexName}").Select(g => new UniqueConstraint
                 {
@@ -418,60 +424,53 @@ namespace SyncChanges
                     Log.Info($"Replicating {"change".ToQuantity(changeInfo.Changes.Count)} to destination {destination.Name}");
 
                     using var db = GetDatabase(destination.ConnectionString, DatabaseType.SqlServer2005);
-                    using var transaction = db.GetTransaction(System.Data.IsolationLevel.ReadUncommitted);
+                    using var transaction = db.GetTransaction();
 
-                    try
+                    var changes = changeInfo.Changes;
+                    var disabledForeignKeyConstraints = new List<ForeignKeyConstraint>();
+                    var batch = new StatementBatch(db, BatchSize, DryRun);
+                    var progress = new Progress(changes.Count);
+
+                    for (int i = 0; i < changes.Count; i++)
                     {
-                        var changes = changeInfo.Changes;
-                        var disabledForeignKeyConstraints = new List<ForeignKeyConstraint>();
-                        var batch = new StatementBatch(db, BatchSize, DryRun);
-                        var progress = new Progress(changes.Count);
+                        var change = changes[i];
+                        Log.Debug($"Replicating change #{i + 1} of {changes.Count} (Version {change.Version}, CreationVersion {change.CreationVersion})");
 
-                        for (int i = 0; i < changes.Count; i++)
+                        batch.CurrentChange = i + 1;
+
+                        foreach (var fk in change.ForeignKeyConstraintsToDisable)
                         {
-                            var change = changes[i];
-                            Log.Debug($"Replicating change #{i + 1} of {changes.Count} (Version {change.Version}, CreationVersion {change.CreationVersion})");
-
-                            batch.CurrentChange = i + 1;
-
-                            foreach (var fk in change.ForeignKeyConstraintsToDisable)
+                            if (!disabledForeignKeyConstraints.Contains(fk))
                             {
-                                if (!disabledForeignKeyConstraints.Contains(fk))
-                                {
-                                    DisableForeignKeyConstraint(batch, fk);
-                                    disabledForeignKeyConstraints.Add(fk);
-                                }
+                                DisableForeignKeyConstraint(batch, fk);
+                                disabledForeignKeyConstraints.Add(fk);
                             }
-
-                            PerformChange(batch, change);
-
-                            if (progress.Due(i + 1, out var report))
-                                Log.Info($"Replicated {i + 1} of {"change".ToQuantity(changes.Count)} to destination {destination.Name} {report}");
                         }
 
-                        // Re-enabling checks the whole table, so it is done once, when all changes are in. The constraints
-                        // were disabled in this transaction, so they are only ever off for its own statements.
-                        foreach (var fk in disabledForeignKeyConstraints)
-                            ReenableForeignKeyConstraint(batch, fk);
+                        PerformChange(batch, change);
 
-                        batch.Flush();
-
-                        if (!DryRun)
-                        {
-                            SetSyncVersion(db, changeInfo.Version);
-                            transaction.Complete();
-                        }
-
-                        Log.Info($"Destination {destination.Name} now at version {changeInfo.Version} (took {progress.Elapsed.Humanize(2)})");
+                        if (progress.Due(i + 1, out var report))
+                            Log.Info($"Replicated {i + 1} of {"change".ToQuantity(changes.Count)} to destination {destination.Name} {report}");
                     }
-                    catch (Exception ex) when (!Token.IsCancellationRequested)
+
+                    // Re-enabling checks the whole table, so it is done once, when all changes are in. The constraints
+                    // were disabled in this transaction, so they are only ever off for its own statements.
+                    foreach (var fk in disabledForeignKeyConstraints)
+                        ReenableForeignKeyConstraint(batch, fk);
+
+                    batch.Flush();
+
+                    if (!DryRun)
                     {
-                        Error = true;
-                        Log.Error(ex, $"Error replicating changes to destination {destination.Name}");
+                        SetSyncVersion(db, changeInfo.Version);
+                        transaction.Complete();
                     }
+
+                    Log.Info($"Destination {destination.Name} now at version {changeInfo.Version} (took {progress.Elapsed.Humanize(2)})");
                 }
                 catch (Exception ex) when (!Token.IsCancellationRequested)
                 {
+                    // the transaction has been rolled back
                     Error = true;
                     Log.Error(ex, $"Error replicating changes to destination {destination.Name}");
                 }
@@ -481,13 +480,13 @@ namespace SyncChanges
         private static void ReenableForeignKeyConstraint(StatementBatch batch, ForeignKeyConstraint fk)
         {
             Log.Debug($"Re-enabling foreign key constraint {fk.ForeignKeyName}");
-            batch.Add($"alter table {fk.TableName} with check check constraint [{fk.ForeignKeyName}]");
+            batch.Add($"alter table {fk.TableName} with check check constraint {QuoteName(fk.ForeignKeyName)}");
         }
 
         private static void DisableForeignKeyConstraint(StatementBatch batch, ForeignKeyConstraint fk)
         {
             Log.Debug($"Disabling foreign key constraint {fk.ForeignKeyName}");
-            batch.Add($"alter table {fk.TableName} nocheck constraint [{fk.ForeignKeyName}]");
+            batch.Add($"alter table {fk.TableName} nocheck constraint {QuoteName(fk.ForeignKeyName)}");
         }
 
         private void SetSyncVersion(Database db, long currentVersion)
@@ -561,12 +560,8 @@ namespace SyncChanges
                     using var reader = cmd.ExecuteReader();
                     var numChanges = 0;
 
-                    object[] nullableMap = null;
-
                     while (reader.Read())
                     {
-                        nullableMap ??= reader.GetNullableTypeMap();
-
                         var col = 0;
                         var change = new Change { Operation = ((string)reader[col])[0], Table = table };
                         col++;
@@ -583,18 +578,12 @@ namespace SyncChanges
                             continue;
                         }
 
+                        // a null is sent as a parameter of the column's type (see StatementBatch), whatever its .NET type
                         for (int i = 0; i < table.KeyColumns.Count; i++, col++)
-                        {
-                            var val = reader.GetValue(col);
-                            change.Keys[table.KeyColumns[i]] = (val == DBNull.Value ? (nullableMap[col] ?? val) : val);
-                        }
+                            change.Keys[table.KeyColumns[i]] = reader.GetValue(col);
 
                         for (int i = 0; i < table.OtherColumns.Count; i++, col++)
-                        {
-                            var val = reader.GetValue(col);
-                            change.Others[table.OtherColumns[i]] = (val == DBNull.Value ? (nullableMap[col] ?? val) : val);
-
-                        }
+                            change.Others[table.OtherColumns[i]] = reader.GetValue(col);
 
                         changes.Add(change);
                         numChanges++;

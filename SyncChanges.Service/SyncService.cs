@@ -89,7 +89,10 @@ namespace SyncChanges.Service
 
             try
             {
-                SyncTask?.Wait();
+                // cancelling stops the running command and rolls back its transaction, which can take a while;
+                // the service control manager gives up on a service that does not stop within its timeout
+                while (SyncTask != null && !SyncTask.Wait(TimeSpan.FromSeconds(10)))
+                    RequestAdditionalTime(15000);
             }
             catch (AggregateException)
             {

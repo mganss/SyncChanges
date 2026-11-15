@@ -15,9 +15,9 @@
     <PackageId>SyncChanges.Console</PackageId>
     <PackageTags>replication synchronization sqlserver sql-server mirroring database</PackageTags>
     <PackageProjectUrl>https://github.com/mganss/SyncChanges</PackageProjectUrl>
-    <PackageLicenseUrl>https://github.com/mganss/SyncChanges/blob/master/LICENSE</PackageLicenseUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RepositoryType>git</RepositoryType>
-    <RepositoryUrl>git://github.com/mganss/SyncChanges</RepositoryUrl>
+    <RepositoryUrl>https://github.com/mganss/SyncChanges.git</RepositoryUrl>
     <RootNamespace>SyncChanges.Console</RootNamespace>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <IncludeSymbols>true</IncludeSymbols>

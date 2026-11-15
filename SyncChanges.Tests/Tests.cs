@@ -1421,6 +1421,39 @@ namespace SyncChanges.Tests
         }
 
         [Test]
+        public void DelimitedNamesTest()
+        {
+            // the databases are dropped after each test, with their tables
+            CreateTables(["[Odd]]Parent] ([I]]d] int primary key not null, [Na]]me] nvarchar(20) null)",
+                "[Odd]]Child] ([I]]d] int primary key not null, [Pa]]rent] int not null)"],
+                "alter table [Odd]]Child] add constraint [Odd]]FK] foreign key ([Pa]]rent]) references [Odd]]Parent]([I]]d])");
+            // a name with a ], as it is, and delimited
+            var config = ConfigForTables("Odd]Parent", "[dbo].[Odd]]Child]");
+            const string parents = "select concat([I]]d], '-', [Na]]me]) from [Odd]]Parent] order by 1";
+            const string children = "select concat([I]]d], '-', [Pa]]rent]) from [Odd]]Child] order by 1";
+
+            using (var db = GetDatabase(SourceDatabaseName))
+                db.Execute("insert into [Odd]]Parent] values (1, N'a'); insert into [Odd]]Child] values (1, 1)");
+
+            AssertSynced(new Synchronizer(config));
+            AssertSameRows(children);
+
+            // the child's update references a parent whose insert comes later, so the constraint is disabled
+            using (var db = GetDatabase(SourceDatabaseName))
+            {
+                db.Execute("insert into [Odd]]Parent] values (2, N'b')");
+                db.Execute("update [Odd]]Child] set [Pa]]rent] = 2");
+                db.Execute("update [Odd]]Parent] set [Na]]me] = N'c' where [I]]d] = 2");
+            }
+
+            var (success, log) = SyncWithLog(new Synchronizer(config));
+            Assert.That(success, Is.True, () => string.Join(Environment.NewLine, log.Where(l => l.Contains("rror"))));
+            Assert.That(log, Has.Some.Contains("Odd]FK needs to be disabled"));
+            AssertSameRows(parents);
+            AssertSameRows(children);
+        }
+
+        [Test]
         public void NullConfigTest()
         {
             Assert.Throws<ArgumentException>(new Action(() => new Synchronizer(null)));

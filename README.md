@@ -64,7 +64,7 @@ A configuration file looks like this:
 }
 ```
 
-`Tables` is optional. If you don't specify it, all tables will be replicated.
+`Tables` is optional. If you don't specify it, all tables will be replicated. A table can be named with or without its schema and brackets (e.g. `Users`, `dbo.Users` or `[dbo].[Users]`), regardless of case.
 
 The configuration file can also hold settings that apply to all replication sets. Each is optional; the console application's options and, for the service, a setting left out of the configuration file in `SyncChanges.Service.dll.config` apply instead:
 
@@ -102,7 +102,9 @@ with (track_columns_updated = off)
 
 More at MSDN: [Enable and Disable Change Tracking](https://msdn.microsoft.com/en-us/library/bb964713.aspx)
 
-SyncChanges does not use the column tracking feature, which means on an update to a row, all non-primary-key columns will be updated.
+SyncChanges does not use the column tracking feature, which means on an update to a row, all non-primary-key columns will be updated, except an identity column, whose value cannot change.
+
+Columns whose values the destination generates itself are not replicated: computed columns, `rowversion` (`timestamp`) columns and `GENERATED ALWAYS` columns, such as the period columns of temporal tables.
 
 Note that change tracking does not have to be enabled in the destination databases. Therefore, SyncChanges will likely work with destination databases lower than SQL Server 2008, though this has not been tested. The source database must be at least SQL Server 2008.
 
@@ -127,6 +129,8 @@ This can become a problem when you're dealing with foreign key constraints, spec
 SyncChanges replicates each change at the version of its last update. To overcome this problem, it defers the insert of a row that references a row inserted later until just after that insert. This needs no foreign key constraint to be disabled, and it cannot violate a unique constraint: until the deferred row is inserted it holds no values, and the rows changed in between then hold their final values, which agree with the deferred row's values as they do in the source database.
 
 An update is not deferred, as its row keeps its old values in the meantime. For an update that references a row inserted later, and for inserts that reference each other in a cycle, SyncChanges disables (only) the corresponding foreign key constraints. They are re-enabled with a check of the existing rows once all changes are in, within the same transaction, so a violation still fails the replication. Note that disabling a constraint takes a schema modification lock on the table until the transaction ends, which blocks all readers of that table in the destination database, even those reading uncommitted data. The log says how many inserts were deferred and how many changes needed a constraint disabled.
+
+Deletes have the opposite problem: a row has to be deleted after the rows that referenced it were deleted or changed to reference another row, but those changes may come later, e.g. because the referencing row was updated again later, or because the changes of one transaction come in the order of their tables. As a deleted row's values are no longer known, SyncChanges defers the delete of a row that another table references until after the last update or delete in that table. Where this might violate a constraint (the table has unique constraints and later changes may take the deleted row's values, or the row may reference a row that is deleted later), it disables the referencing foreign key constraints for the delete instead, as described above.
 
 Logging
 -------
