@@ -370,6 +370,7 @@ namespace SyncChanges
                         var changes = changeInfo.Changes;
                         var disabledForeignKeyConstraints = new List<ForeignKeyConstraint>();
                         var batch = new StatementBatch(db, BatchSize, DryRun);
+                        var progress = new Progress(changes.Count);
 
                         for (int i = 0; i < changes.Count; i++)
                         {
@@ -388,6 +389,9 @@ namespace SyncChanges
                             }
 
                             PerformChange(batch, change);
+
+                            if (progress.Due(i + 1, out var report))
+                                Log.Info($"Replicated {i + 1} of {"change".ToQuantity(changes.Count)} to destination {destination.Name} {report}");
                         }
 
                         // Re-enabling checks the whole table, so it is done once, when all changes are in. The constraints
@@ -403,7 +407,7 @@ namespace SyncChanges
                             transaction.Complete();
                         }
 
-                        Log.Info($"Destination {destination.Name} now at version {changeInfo.Version}");
+                        Log.Info($"Destination {destination.Name} now at version {changeInfo.Version} (took {progress.Elapsed.Humanize(2)})");
                     }
                     catch (Exception ex)
                     {
